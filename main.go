@@ -32,6 +32,23 @@ func main() {
 	log.SetPrefix("[frao-advisor] ")
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
 
+	// Route subcommands before entering MCP mode
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "setup":
+			projectDir := "."
+			if len(os.Args) > 2 {
+				projectDir = os.Args[2]
+			}
+			binPath, _ := os.Executable()
+			runSetup(projectDir, binPath)
+			return
+		case "help", "--help", "-h":
+			printUsage()
+			return
+		}
+	}
+
 	// Read configuration from environment
 	apiKey := os.Getenv("DEEPSEEK_API_KEY")
 	if apiKey == "" {
@@ -242,6 +259,24 @@ func handleToolsList(req Request) {
 		"tools": tools,
 	}
 	writeResponse(req.ID, result)
+}
+
+func printUsage() {
+	fmt.Println(`Frao Advisor MCP — expert reviews and second opinions using DeepSeek V4 Pro.
+
+Usage:
+  frao-advisor                  Run as MCP server (stdin/stdout JSON-RPC)
+  frao-advisor setup [dir]      Install slash commands and print config
+  frao-advisor help             Show this help
+
+Setup:
+  Run from your project root to install /advisor-on and /advisor-off commands:
+    frao-advisor setup .
+
+Environment:
+  DEEPSEEK_API_KEY    DeepSeek API key (required)
+  ADVISOR_MODEL       Model name (default: deepseek-v4-pro)
+  ADVISOR_API_BASE    API base URL (default: https://api.deepseek.com/v1)`)
 }
 
 // ─── Tool Call ─────────────────────────────────────────────────────────
