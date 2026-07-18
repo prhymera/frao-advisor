@@ -37,11 +37,17 @@ func main() {
 		switch os.Args[1] {
 		case "setup":
 			projectDir := "."
-			if len(os.Args) > 2 {
-				projectDir = os.Args[2]
+			global := false
+			for i := 2; i < len(os.Args); i++ {
+				switch os.Args[i] {
+				case "--global":
+					global = true
+				default:
+					projectDir = os.Args[i]
+				}
 			}
 			binPath, _ := os.Executable()
-			runSetup(projectDir, binPath)
+			runSetup(projectDir, binPath, global)
 			return
 		case "help", "--help", "-h":
 			printUsage()
@@ -266,7 +272,8 @@ func printUsage() {
 
 Usage:
   frao-advisor                  Run as MCP server (stdin/stdout JSON-RPC)
-  frao-advisor setup [dir]      Install slash commands and print config
+  frao-advisor setup [dir]           Install slash commands in project .claude/commands
+  frao-advisor setup --global       Install slash commands in ~/.claude/commands (recommended)
   frao-advisor help             Show this help
 
 Setup:

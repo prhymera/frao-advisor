@@ -49,12 +49,20 @@ expert reviews or second opinions required unless explicitly requested by the us
 // Setup installs the advisor toggle commands and prints MCP configuration.
 //   projectDir: absolute path to the project root (e.g. frao-technologies/)
 //   binPath:    absolute path to the frao-advisor binary
-func runSetup(projectDir, binPath string) {
+//   global:     when true, install to ~/.claude/commands/ instead of projectDir/.claude/commands/
+func runSetup(projectDir, binPath string, global bool) {
 	fmt.Println("⚙️  Frao Advisor Setup")
 	fmt.Println(strings.Repeat("─", 60))
 
 	// 1. Install command files
-	commandsDir := filepath.Join(projectDir, ".claude", "commands")
+	commandsDir := ""
+	if global {
+		home, _ := os.UserHomeDir()
+		commandsDir = filepath.Join(home, ".claude", "commands")
+		fmt.Println("📦 Installing globally to ~/.claude/commands/")
+	} else {
+		commandsDir = filepath.Join(projectDir, ".claude", "commands")
+	}
 	if err := os.MkdirAll(commandsDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to create commands directory: %v\n", err)
 		os.Exit(1)
