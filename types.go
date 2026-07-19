@@ -72,6 +72,11 @@ type PropertySchema struct {
 type ToolCallParams struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+	Meta      *ToolMeta      `json:"_meta,omitempty"`
+}
+
+type ToolMeta struct {
+	ProgressToken any `json:"progressToken,omitempty"`
 }
 
 type ToolCallResult struct {

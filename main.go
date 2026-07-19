@@ -153,7 +153,6 @@ func writeJSON(v any) {
 // ─── Initialize ────────────────────────────────────────────────────────
 
 func handleInitialize(req Request) {
-	// Parse client info from params if needed (optional)
 	result := InitializeResult{
 		ProtocolVersion: "2024-11-05",
 		Capabilities: ToolCapability{
@@ -291,7 +290,6 @@ Environment:
 func handleToolCall(req Request, client *DeepSeekClient) {
 	params, ok := req.Params.(map[string]any)
 	if !ok {
-		// Try re-unmarshaling
 		var p ToolCallParams
 		data, _ := json.Marshal(req.Params)
 		if err := json.Unmarshal(data, &p); err != nil {
@@ -299,6 +297,12 @@ func handleToolCall(req Request, client *DeepSeekClient) {
 			return
 		}
 		params = map[string]any{"name": p.Name, "arguments": p.Arguments}
+	}
+
+	// Extract optional progress token from _meta for MCP progress notifications
+	var progressToken any
+	if meta, ok := params["_meta"].(map[string]any); ok {
+		progressToken = meta["progressToken"]
 	}
 
 	name, _ := params["name"].(string)
@@ -310,17 +314,35 @@ func handleToolCall(req Request, client *DeepSeekClient) {
 	case "frao-expert-list":
 		result = handleExpertList()
 	case "frao-consult":
-		result = handleConsult(args, client)
+		result = handleConsult(args, client, progressToken)
 	case "frao-expert-review":
-		result = handleExpertReview(args, client)
+		result = handleExpertReview(args, client, progressToken)
 	case "frao-multi-perspective":
-		result = handleMultiPerspective(args, client)
+		result = handleMultiPerspective(args, client, progressToken)
 	default:
 		writeError(req.ID, -32602, "Unknown tool: "+name, nil)
 		return
 	}
 
 	writeResponse(req.ID, result)
+}
+
+// sendProgress sends an MCP notifications/progress message to the client.
+func sendProgress(progressToken any, progress, total float64, msg string) {
+	if progressToken == nil {
+		return
+	}
+	n := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/progress",
+		"params": map[string]any{
+			"progressToken": progressToken,
+			"progress":      progress,
+			"total":         total,
+			"message":       msg,
+		},
+	}
+	writeJSON(n)
 }
 
 // ─── Tool: frao-expert-list ───────────────────────────────────────────
@@ -336,27 +358,31 @@ func handleExpertList() ToolCallResult {
 
 // ─── Tool: frao-consult ───────────────────────────────────────────────
 
-func handleConsult(args map[string]any, client *DeepSeekClient) ToolCallResult {
+func handleConsult(args map[string]any, client *DeepSeekClient, progressToken any) ToolCallResult {
 	question, _ := args["question"].(string)
 	if question == "" {
 		return errorResult("'question' is required")
 	}
 
 	effort := getArg(args, "reasoning_effort", "high")
-	system := fmt.Sprintf(advisorSystemPreamble, effort)
+	log.Printf("consult — effort=%s", effort)
+	sendProgress(progressToken, 0.1, 1, "Consulting deepseek-v4-pro...")
 
+	system := fmt.Sprintf(advisorSystemPreamble, effort)
 	answer, err := client.Chat(system, question, 0.1, 8192)
 	if err != nil {
 		log.Printf("consult error: %v", err)
 		return errorResult(fmt.Sprintf("Consult failed: %v", err))
 	}
 
+	sendProgress(progressToken, 1, 1, "Consult complete")
+	log.Printf("consult — response %d bytes", len(answer))
 	return textResult(answer)
 }
 
 // ─── Tool: frao-expert-review ─────────────────────────────────────────
 
-func handleExpertReview(args map[string]any, client *DeepSeekClient) ToolCallResult {
+func handleExpertReview(args map[string]any, client *DeepSeekClient, progressToken any) ToolCallResult {
 	expertKey, _ := args["expert"].(string)
 	context, _ := args["context"].(string)
 
@@ -373,20 +399,24 @@ func handleExpertReview(args map[string]any, client *DeepSeekClient) ToolCallRes
 	}
 
 	effort := getArg(args, "reasoning_effort", "high")
-	system := fmt.Sprintf("%s\n\nReasoning effort: %s\nProvide structured analysis with severity ratings and concrete recommendations.", expert.SystemPrompt, effort)
+	log.Printf("expert-review — %s, effort=%s", expertKey, effort)
+	sendProgress(progressToken, 0.1, 1, fmt.Sprintf("Consulting %s...", expert.Name))
 
+	system := fmt.Sprintf("%s\n\nReasoning effort: %s\nProvide structured analysis with severity ratings and concrete recommendations.", expert.SystemPrompt, effort)
 	answer, err := client.Chat(system, context, 0.15, 8192)
 	if err != nil {
-		log.Printf("expert review error: %v", err)
+		log.Printf("expert-review %s error: %v", expertKey, err)
 		return errorResult(fmt.Sprintf("Review failed: %v", err))
 	}
 
+	sendProgress(progressToken, 1, 1, fmt.Sprintf("%s review complete", expert.Name))
+	log.Printf("expert-review %s — response %d bytes", expertKey, len(answer))
 	return textResult(answer)
 }
 
 // ─── Tool: frao-multi-perspective ─────────────────────────────────────
 
-func handleMultiPerspective(args map[string]any, client *DeepSeekClient) ToolCallResult {
+func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progressToken any) ToolCallResult {
 	context, _ := args["context"].(string)
 	if context == "" {
 		return errorResult("'context' is required")
@@ -409,6 +439,8 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient) ToolCal
 	}
 
 	effort := getArg(args, "reasoning_effort", "high")
+	total := float64(len(selectedExperts) + 1) // experts + synthesis
+	log.Printf("multi-perspective — %d experts: %s, effort=%s", len(selectedExperts), strings.Join(selectedExperts, ", "), effort)
 
 	// Step 1: Run each expert (sequentially to respect API rate limits)
 	type perspective struct {
@@ -418,8 +450,11 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient) ToolCal
 	}
 
 	var perspectives []perspective
-	for _, key := range selectedExperts {
+	for i, key := range selectedExperts {
 		expert := experts[key]
+		log.Printf("multi-perspective — consulting %s (%d/%d)...", expert.Name, i+1, len(selectedExperts))
+		sendProgress(progressToken, float64(i)/total, total, fmt.Sprintf("Consulting %s...", expert.Name))
+
 		system := fmt.Sprintf("%s\n\nReasoning effort: %s\nYou are one of %d experts reviewing this. Focus solely on your domain. Do not defer to or repeat other perspectives.",
 			expert.SystemPrompt, effort, len(selectedExperts))
 
@@ -428,10 +463,14 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient) ToolCal
 			log.Printf("multi-perspective %s error: %v", key, err)
 			analysis = fmt.Sprintf("[Error consulting %s: %v]", expert.Name, err)
 		}
+		log.Printf("multi-perspective — %s: got %d bytes", key, len(analysis))
 		perspectives = append(perspectives, perspective{Key: key, Name: expert.Name, Analysis: analysis})
 	}
 
 	// Step 2: Build synthesis input
+	log.Print("multi-perspective — synthesizing...")
+	sendProgress(progressToken, float64(len(selectedExperts))/total, total, "Synthesizing expert perspectives...")
+
 	var parts []string
 	for _, p := range perspectives {
 		parts = append(parts, fmt.Sprintf("=== %s (%s) ===\n%s", p.Name, p.Key, p.Analysis))
@@ -444,6 +483,9 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient) ToolCal
 		log.Printf("synthesis error: %v", err)
 		synthesis = fmt.Sprintf("[Synthesis failed: %v]", err)
 	}
+
+	sendProgress(progressToken, total, total, "Multi-perspective analysis complete")
+	log.Print("multi-perspective — complete")
 
 	// Build output
 	var out strings.Builder
