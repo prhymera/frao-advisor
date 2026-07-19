@@ -508,7 +508,11 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 
 func textResult(text string) ToolCallResult {
 	return ToolCallResult{
-		Content: []ContentBlock{{Type: "text", Text: text}},
+		Content: []ContentBlock{{
+			Type:     "text",
+			Text:     text,
+			MimeType: "text/markdown",
+		}},
 	}
 }
 

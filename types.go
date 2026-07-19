@@ -85,8 +85,9 @@ type ToolCallResult struct {
 }
 
 type ContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	MimeType string `json:"mimeType,omitempty"`
 }
 
 // DeepSeek API types
