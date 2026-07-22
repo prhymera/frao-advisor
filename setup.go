@@ -8,6 +8,7 @@ import (
 )
 
 // Command templates installed by `frao-advisor setup`
+// The protocol is opt-out: active by default unless ~/.claude/advisor-inactive exists.
 const advisorOnCommand = `---
 name: advisor-on
 description: Enable advisor mode — automatic expert reviews on every task using deepseek-v4-pro
@@ -15,11 +16,10 @@ description: Enable advisor mode — automatic expert reviews on every task usin
 
 # /advisor-on — Enable Advisor Mode
 
-Create the flag file at ~/.claude/advisor-active to enable the full advisor protocol:
+Remove the disable flag to re-enable the advisor protocol (it is ON by default):
 
-1. Run: touch ~/.claude/advisor-active
-2. Confirm the flag is set: test -f ~/.claude/advisor-active && echo "✅ Advisor mode active"
-3. Read the Advisor Protocol section in the project CLAUDE.md and follow it for every subsequent task
+1. Run: rm -f ~/.claude/advisor-inactive
+2. Confirm: test -f ~/.claude/advisor-inactive && echo "still disabled" || echo "✅ Advisor mode active"
 
 The advisor protocol is now active. You MUST:
 - Run frao-expert-review (code-reviewer) after every file change >5 lines
@@ -37,10 +37,10 @@ description: Disable advisor mode — return to normal Claude behavior
 
 # /advisor-off — Disable Advisor Mode
 
-Remove the advisor flag file to disable the protocol:
+Create the disable flag to opt out of the advisor protocol:
 
-1. Run: rm -f ~/.claude/advisor-active
-2. Confirm: test -f ~/.claude/advisor-active && echo "still active" || echo "✅ Advisor mode disabled"
+1. Run: touch ~/.claude/advisor-inactive
+2. Confirm: test -f ~/.claude/advisor-inactive && echo "✅ Advisor mode disabled" || echo "still active"
 
 The advisor protocol is now inactive. Return to normal behavior — no automatic
 expert reviews or second opinions required unless explicitly requested by the user.
@@ -105,21 +105,21 @@ func runSetup(projectDir, binPath string, global bool) {
 	fmt.Println(strings.Repeat("─", 60))
 	fmt.Println(" Add this section to your project CLAUDE.md for the protocol to work:")
 	fmt.Println()
-	fmt.Println("  ## \U0001f9e0 ADVISOR PROTOCOL (Toggle)")
+	fmt.Println("  ## \U0001f9e0 ADVISOR PROTOCOL (Opt-Out)")
 	fmt.Println()
 	fmt.Println("  The frao-advisor MCP server provides expert second opinions, code review,")
 	fmt.Println("  security analysis, and multi-perspective synthesis using deepseek-v4-pro.")
 	fmt.Println()
-	fmt.Println("  Run `frao-advisor setup` in the project root to install toggle commands.")
+	fmt.Println("  The protocol is **active by default** after installation. Use `/advisor-off` to disable.")
 	fmt.Println()
 	fmt.Println("  | Command | Effect |")
 	fmt.Println("  |---------|--------|")
-	fmt.Println("  | /advisor-on  | Enable advisor mode - creates ~/.claude/advisor-active |")
-	fmt.Println("  | /advisor-off | Disable advisor mode - removes ~/.claude/advisor-active |")
+	fmt.Println("  | /advisor-off | Disable advisor mode — creates ~/.claude/advisor-inactive |")
+	fmt.Println("  | /advisor-on  | Re-enable advisor mode — removes ~/.claude/advisor-inactive |")
 	fmt.Println()
-	fmt.Println("  ### Protocol (active only when ~/.claude/advisor-active exists)")
+	fmt.Println("  ### Protocol (active by default; disabled when ~/.claude/advisor-inactive exists)")
 	fmt.Println()
-	fmt.Println("  | Trigger | Tool | Purpose |")
+	fmt.Println("  When enabled, you **MUST** use the frao-advisor tools as a standard part of every task's workflow, not just when asked:")
 	fmt.Println("  |---------|------|---------|")
 	fmt.Println("  | After writing any file (>5 lines) | frao-expert-review (code-reviewer) | Verify correctness |")
 	fmt.Println("  | Before declaring a task complete | frao-consult | Second opinion on the full change |")
@@ -132,5 +132,5 @@ func runSetup(projectDir, binPath string, global bool) {
 	fmt.Println("  Advisor verdict must be included in task completion summaries.")
 	fmt.Println()
 	fmt.Println(strings.Repeat("─", 60))
-	fmt.Println("✅ Setup complete. Run '/advisor-on' in your next Claude Code session to activate.")
+	fmt.Println("✅ Setup complete. The advisor protocol is active by default. Use /advisor-off to disable.")
 }
