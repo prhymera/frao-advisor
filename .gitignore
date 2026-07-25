@@ -1,3 +1,6 @@
 frao-advisor
 *.test
 dist/
+advisor.db
+advisor.db-wal
+advisor.db-shm

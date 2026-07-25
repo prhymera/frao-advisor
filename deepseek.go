@@ -37,20 +37,43 @@ func NewDeepSeekClient(apiKey, baseURL, model string) *DeepSeekClient {
 }
 
 // Chat sends a chat completion request and returns the response text.
+// Maintains backward compatibility — delegates to ChatWithUsage internally.
 func (c *DeepSeekClient) Chat(system, user string, temperature float64, maxTokens int) (string, error) {
-	messages := []ChatMessage{
-		{Role: "system", Content: system},
-		{Role: "user", Content: user},
+	result, err := c.ChatWithUsage(system, user, temperature, maxTokens)
+	if err != nil {
+		return "", err
 	}
-	return c.chat(messages, temperature, maxTokens)
+	return result.Text, nil
 }
 
 // ChatWithMessages sends a chat completion with pre-built messages.
 func (c *DeepSeekClient) ChatWithMessages(messages []ChatMessage, temperature float64, maxTokens int) (string, error) {
-	return c.chat(messages, temperature, maxTokens)
+	result, err := c.ChatWithMessagesWithUsage(messages, temperature, maxTokens)
+	if err != nil {
+		return "", err
+	}
+	return result.Text, nil
 }
 
-func (c *DeepSeekClient) chat(messages []ChatMessage, temperature float64, maxTokens int) (string, error) {
+// ChatWithUsage returns a ChatResult with token usage information.
+func (c *DeepSeekClient) ChatWithUsage(system, user string, temperature float64, maxTokens int) (*ChatResult, error) {
+	messages := []ChatMessage{
+		{Role: "system", Content: system},
+		{Role: "user", Content: user},
+	}
+	return c.chatWithUsage(messages, temperature, maxTokens)
+}
+
+// ChatWithMessagesWithUsage returns a ChatResult with pre-built messages.
+func (c *DeepSeekClient) ChatWithMessagesWithUsage(messages []ChatMessage, temperature float64, maxTokens int) (*ChatResult, error) {
+	return c.chatWithUsage(messages, temperature, maxTokens)
+}
+
+// chatWithUsage is the internal implementation that calls the DeepSeek API
+// and returns both content and usage metadata.
+func (c *DeepSeekClient) chatWithUsage(messages []ChatMessage, temperature float64, maxTokens int) (*ChatResult, error) {
+	start := time.Now()
+
 	if temperature == 0 {
 		temperature = 0.2
 	}
@@ -67,39 +90,55 @@ func (c *DeepSeekClient) chat(messages []ChatMessage, temperature float64, maxTo
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", c.baseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("http call: %w", err)
+		return nil, fmt.Errorf("http call: %w", err)
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("API error %d: %s", resp.StatusCode, string(raw[:min(len(raw), 500)]))
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(raw[:min(len(raw), 500)]))
 	}
 
 	var chatResp ChatResponse
 	if err := json.Unmarshal(raw, &chatResp); err != nil {
-		return "", fmt.Errorf("parse response: %w", err)
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("empty response choices")
+		return nil, fmt.Errorf("empty response choices")
 	}
 
-	return chatResp.Choices[0].Message.Content, nil
+	result := &ChatResult{
+		Text:        chatResp.Choices[0].Message.Content,
+		Model:       c.model,
+		DurationMs:  time.Since(start).Milliseconds(),
+		Temperature: temperature,
+		MaxTokens:   maxTokens,
+	}
+
+	if chatResp.Usage != nil {
+		result.PromptTokens = chatResp.Usage.PromptTokens
+		result.CompletionTokens = chatResp.Usage.CompletionTokens
+		result.TotalTokens = chatResp.Usage.TotalTokens
+		result.PromptCacheHitTokens = chatResp.Usage.PromptCacheHitTokens
+		result.PromptCacheMissTokens = chatResp.Usage.PromptCacheMissTokens
+	}
+
+	return result, nil
 }

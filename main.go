@@ -25,9 +25,16 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
+	"github.com/prhymera/frao-advisor/db"
 )
 
+// Package-level state for handlers
+var (
+	persister   *Persistence
+	currentSessionID string
+)
 func main() {
 	log.SetPrefix("[frao-advisor] ")
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
@@ -70,6 +77,18 @@ func main() {
 	client := NewDeepSeekClient(apiKey, baseURL, model)
 	log.Printf("starting — model: %s, api: %s", model, baseURL)
 
+	// Initialize persistence
+	dbPath := getEnv("ADVISOR_DB_PATH", filepath.Join(workDir(), "advisor.db"))
+	database, err := db.Open(dbPath)
+	if err != nil {
+		log.Printf("WARNING: database unavailable (%v) — persistence disabled", err)
+	} else {
+		persister = &Persistence{database: database}
+		defer database.Close()
+		log.Printf("persistence active — %s", dbPath)
+	}
+	currentSessionID = persister.EnsureSession("mcp-server-start")
+
 	// MCP server: read JSON-RPC requests from stdin, write responses to stdout
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 4*1024*1024) // 4MB max line
@@ -110,13 +129,19 @@ func main() {
 	}
 }
 
+func workDir() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return dir
+}
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
 }
-
 // writeResponse sends a JSON-RPC response to stdout.
 func writeResponse(id any, result any) {
 	resp := Response{
@@ -356,8 +381,6 @@ func handleExpertList() ToolCallResult {
 	return textResult(strings.Join(items, "\n"))
 }
 
-// ─── Tool: frao-consult ───────────────────────────────────────────────
-
 func handleConsult(args map[string]any, client *DeepSeekClient, progressToken any) ToolCallResult {
 	question, _ := args["question"].(string)
 	if question == "" {
@@ -369,17 +392,19 @@ func handleConsult(args map[string]any, client *DeepSeekClient, progressToken an
 	sendProgress(progressToken, 0.1, 1, "Consulting deepseek-v4-pro...")
 
 	system := fmt.Sprintf(advisorSystemPreamble, effort)
-	answer, err := client.Chat(system, question, 0.1, 8192)
+	result, err := client.ChatWithUsage(system, question, 0.1, 8192)
 	if err != nil {
 		log.Printf("consult error: %v", err)
 		return errorResult(fmt.Sprintf("Consult failed: %v", err))
 	}
 
-	sendProgress(progressToken, 1, 1, "Consult complete")
-	log.Printf("consult — response %d bytes", len(answer))
-	return textResult(answer)
-}
+	persister.CaptureConsult(currentSessionID, question, result)
 
+	sendProgress(progressToken, 1, 1, "Consult complete")
+	log.Printf("consult — %d tokens, $%.6f, %dms", result.TotalTokens,
+		float64(result.PromptTokens+result.CompletionTokens)/1_000_000*0.435, result.DurationMs)
+	return textResult(result.Text)
+}
 // ─── Tool: frao-expert-review ─────────────────────────────────────────
 
 func handleExpertReview(args map[string]any, client *DeepSeekClient, progressToken any) ToolCallResult {
@@ -403,15 +428,17 @@ func handleExpertReview(args map[string]any, client *DeepSeekClient, progressTok
 	sendProgress(progressToken, 0.1, 1, fmt.Sprintf("Consulting %s...", expert.Name))
 
 	system := fmt.Sprintf("%s\n\nReasoning effort: %s\nProvide structured analysis with severity ratings and concrete recommendations.", expert.SystemPrompt, effort)
-	answer, err := client.Chat(system, context, 0.15, 8192)
+	result, err := client.ChatWithUsage(system, context, 0.15, 8192)
 	if err != nil {
 		log.Printf("expert-review %s error: %v", expertKey, err)
 		return errorResult(fmt.Sprintf("Review failed: %v", err))
 	}
 
+	persister.CaptureExpertReview(currentSessionID, expertKey, context, result)
+
 	sendProgress(progressToken, 1, 1, fmt.Sprintf("%s review complete", expert.Name))
-	log.Printf("expert-review %s — response %d bytes", expertKey, len(answer))
-	return textResult(answer)
+	log.Printf("expert-review %s — %d tokens, %dms", expertKey, result.TotalTokens, result.DurationMs)
+	return textResult(result.Text)
 }
 
 // ─── Tool: frao-multi-perspective ─────────────────────────────────────
