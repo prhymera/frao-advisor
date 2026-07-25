@@ -4,68 +4,68 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Frao Advisor Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2306b6d4'/%3E%3Ctext x='16' y='23' text-anchor='middle' font-size='20' font-weight='bold' fill='%23fff'%3EF%3C/text%3E%3C/svg%3E">
   <script type="module" src="https://cdn.jsdelivr.net/npm/@starfederation/datastar@v1.2.2/dist/datastar.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <link rel="stylesheet" href="/static/style.css">
-</head>
 <body
   data-signals="section:'overview';range:'all';typeFilter:'all';expertFilter:'all';limit:20;offset:0"
 >
   <div class="layout">
     <!-- ─── Sidebar (desktop) ─── -->
-    <nav class="sidebar">
+    <nav class="sidebar" aria-label="Main navigation">
       <div class="brand">
         <span class="live-dot"></span>
         Frao Advisor
       </div>
       <div class="nav-items">
-        <a href="#" data-on-click="$$set('section','overview');$$get('/dashboard/overview')" class="nav-item">
-          <span class="nav-icon">&#9632;</span> Overview
+        <a href="#" data-on-click="$$set('section','overview');$$get('/dashboard/overview')" class="nav-item" aria-label="Overview">
+          <span class="nav-icon" aria-hidden="true">&#9632;</span> Overview
         </a>
-        <a href="#" data-on-click="$$set('section','timeline');$$get('/dashboard/timeline')" class="nav-item">
-          <span class="nav-icon">&#9776;</span> Timeline
+        <a href="#" data-on-click="$$set('section','timeline');$$get('/dashboard/timeline')" class="nav-item" aria-label="Timeline">
+          <span class="nav-icon" aria-hidden="true">&#9776;</span> Timeline
         </a>
-        <a href="#" data-on-click="$$set('section','experts');$$get('/dashboard/experts')" class="nav-item">
-          <span class="nav-icon">&#9733;</span> Experts
+        <a href="#" data-on-click="$$set('section','experts');$$get('/dashboard/experts')" class="nav-item" aria-label="Experts">
+          <span class="nav-icon" aria-hidden="true">&#9733;</span> Experts
         </a>
-        <a href="#" data-on-click="$$set('section','deliberations');$$get('/dashboard/deliberations')" class="nav-item">
-          <span class="nav-icon">&#9671;</span> Deliberations
+        <a href="#" data-on-click="$$set('section','deliberations');$$get('/dashboard/deliberations')" class="nav-item" aria-label="Deliberations">
+          <span class="nav-icon" aria-hidden="true">&#9671;</span> Deliberations
         </a>
-        <a href="#" data-on-click="$$set('section','costs');$$get('/dashboard/costs')" class="nav-item">
-          <span class="nav-icon">&#36;</span> Costs
+        <a href="#" data-on-click="$$set('section','costs');$$get('/dashboard/costs')" class="nav-item" aria-label="Costs">
+          <span class="nav-icon" aria-hidden="true">&#36;</span> Costs
         </a>
-        <a href="#" data-on-click="$$set('section','metrics');$$get('/dashboard/metrics')" class="nav-item">
-          <span class="nav-icon">&#9608;</span> Metrics
+        <a href="#" data-on-click="$$set('section','metrics');$$get('/dashboard/metrics')" class="nav-item" aria-label="Metrics">
+          <span class="nav-icon" aria-hidden="true">&#9608;</span> Metrics
         </a>
       </div>
     </nav>
 
     <!-- ─── Main Content ─── -->
-    <main class="content" id="content">
+    <main class="content" id="content" aria-label="Dashboard content">
       <div class="loading">Loading dashboard...</div>
     </main>
   </div>
 
   <!-- ─── Mobile Bottom Bar ─── -->
   <nav class="mobile-bar" id="mobile-bar">
-    <a href="#" data-on-click="$$set('section','overview');$$get('/dashboard/overview')" class="mobile-item">
-      <span class="mobile-icon">&#9632;</span>
+    <a href="#" data-on-click="$$set('section','overview');$$get('/dashboard/overview')" class="mobile-item" aria-label="Overview">
+      <span class="mobile-icon" aria-hidden="true">&#9632;</span>
       <span class="mobile-label">Overview</span>
     </a>
-    <a href="#" data-on-click="$$set('section','timeline');$$get('/dashboard/timeline')" class="mobile-item">
-      <span class="mobile-icon">&#9776;</span>
+    <a href="#" data-on-click="$$set('section','timeline');$$get('/dashboard/timeline')" class="mobile-item" aria-label="Timeline">
+      <span class="mobile-icon" aria-hidden="true">&#9776;</span>
       <span class="mobile-label">Timeline</span>
     </a>
-    <a href="#" data-on-click="$$set('section','experts');$$get('/dashboard/experts')" class="mobile-item">
-      <span class="mobile-icon">&#9733;</span>
+    <a href="#" data-on-click="$$set('section','experts');$$get('/dashboard/experts')" class="mobile-item" aria-label="Experts">
+      <span class="mobile-icon" aria-hidden="true">&#9733;</span>
       <span class="mobile-label">Experts</span>
     </a>
-    <a href="#" data-on-click="$$set('section','costs');$$get('/dashboard/costs')" class="mobile-item">
-      <span class="mobile-icon">&#36;</span>
+    <a href="#" data-on-click="$$set('section','costs');$$get('/dashboard/costs')" class="mobile-item" aria-label="Costs">
+      <span class="mobile-icon" aria-hidden="true">&#36;</span>
       <span class="mobile-label">Costs</span>
     </a>
-    <a href="#" data-on-click="$$set('section','metrics');$$get('/dashboard/metrics')" class="mobile-item">
-      <span class="mobile-icon">&#9608;</span>
+    <a href="#" data-on-click="$$set('section','metrics');$$get('/dashboard/metrics')" class="mobile-item" aria-label="Metrics">
+      <span class="mobile-icon" aria-hidden="true">&#9608;</span>
       <span class="mobile-label">Metrics</span>
     </a>
   </nav>
@@ -110,6 +110,13 @@
 	    }
 	  };
 	  Chart.register(centerTextPlugin);
+
+	  // Respect prefers-reduced-motion: disable chart animations
+	  var motionMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
+	  if (motionMedia.matches) { Chart.defaults.animation = false; }
+	  motionMedia.addEventListener('change', function(e) {
+	    Chart.defaults.animation = !e.matches;
+	  });
 
 	  window.FraoDashboard = {
 	    destroyChart: function(id) {

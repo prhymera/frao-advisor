@@ -3,7 +3,9 @@
 package dashboard
 
 import (
+	"encoding/csv"
 	"embed"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
@@ -46,6 +48,8 @@ func Start(database *db.DB, port string) *http.Server {
 	mux.HandleFunc("GET /dashboard/deliberations", h.Deliberations)
 	mux.HandleFunc("GET /dashboard/costs", h.Costs)
 	mux.HandleFunc("GET /dashboard/metrics", h.Metrics)
+	// CSV export
+	mux.HandleFunc("GET /export/csv", h.CSVExport)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -67,4 +71,47 @@ func Start(database *db.DB, port string) *http.Server {
 func isDatastarReq(r *http.Request) bool {
 	return r.Header.Get("Datastar-Request") == "true" ||
 		strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+}
+
+// CSVExport streams all advice records as a CSV download.
+func (h *Handlers) CSVExport(w http.ResponseWriter, r *http.Request) {
+	entries, _, err := h.DB.Timeline(r.Context(), "", "", 50000, 0)
+	if err != nil {
+		http.Error(w, "Failed to fetch data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=frao-advisor-export.csv")
+
+	wr := csv.NewWriter(w)
+	defer wr.Flush()
+
+	// Header row
+	wr.Write([]string{"Date", "Type", "Expert", "Model", "Tokens", "Cost", "Duration (ms)"})
+
+	for _, e := range entries {
+		wr.Write([]string{
+			sanitizeCSVField(e.CreatedAt),
+			sanitizeCSVField(e.Type),
+			sanitizeCSVField(e.ExpertKey),
+			sanitizeCSVField(e.Model),
+			fmt.Sprintf("%d", e.Tokens),
+			fmt.Sprintf("%.6f", e.Cost),
+			fmt.Sprintf("%d", e.DurationMs),
+		})
+	}
+}
+
+// sanitizeCSVField prefixes dangerous leading characters to prevent CSV injection
+// in spreadsheet applications (e.g., formulas starting with =, +, -, @).
+func sanitizeCSVField(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@':
+		return "'" + s
+	}
+	return s
 }

@@ -170,8 +170,19 @@ func metricCard(label, value string) string {
 
 // ─── Cost Change Indicator ───
 
-		formatCost(today), color, arrow, abs)
- }
+func costChangeHTML(today, yesterday, changePct float64) string {
+	color := "var(--text-dim)"
+	arrow := ""
+	abs := math.Abs(changePct)
+	if changePct > 0 {
+		color = "var(--red)"
+		arrow = "&#9650;"
+	} else if changePct < 0 {
+		color = "var(--green)"
+		arrow = "&#9660;"
+	}
+	return `<span class="cost-change" style="color:` + color + `">` + arrow + ` ` + fmt.Sprintf("%.1f", abs) + `% <span class="cost-today">today ` + formatCost(today) + `</span></span>`
+}
 
  // Chart color palette and helpers
  var chartColors = []string{"#06b6d4", "#f59e0b", "#8b5cf6", "#10b981", "#f43f5e", "#14b8a6", "#ec4899", "#f97316"}
@@ -562,8 +573,9 @@ func renderMetricsContent(cells []db.HeatmapCell, m *db.OverviewMetrics, latency
 
 	// Heatmap card
 	dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	// Toolbar with export
+	b.WriteString(`<div class="metrics-toolbar"><a href="/export/csv" class="export-btn" download aria-label="Export data as CSV file">&#11015; Export CSV</a></div>`)
 	hourLabels := []string{"00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23"}
-
 	b.WriteString(`<div class="card">`)
 	b.WriteString(`<div class="card-header">Activity by Day & Hour (UTC)</div>`)
 	b.WriteString(`<div class="heatmap-wrap"><table class="heatmap-table">`)
