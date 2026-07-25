@@ -100,6 +100,12 @@ func main() {
 		defer dashSrv.Close()
 	}
 
+	// ADVISOR_MCP_DISABLE=1 runs dashboard-only (no MCP stdin loop)
+	if getEnv("ADVISOR_MCP_DISABLE", "") == "1" {
+		log.Print("MCP disabled by ADVISOR_MCP_DISABLE — dashboard only")
+		select {}
+	}
+
 	// MCP server: read JSON-RPC requests from stdin, write responses to stdout
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 4*1024*1024) // 4MB max line
