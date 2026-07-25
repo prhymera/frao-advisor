@@ -206,12 +206,18 @@ func (h *Handlers) Metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	latency, err := h.DB.DailyLatency(ctx, 30)
+	if err != nil {
+		sse.PatchElements(errorContent("Unable to load metrics", err.Error()))
+		return
+	}
+
 	overview, _ := h.DB.GetOverviewMetrics(ctx)
 	if overview == nil {
 		overview = &db.OverviewMetrics{}
 	}
 
-	sse.PatchElements(`<div id="content">` + renderMetricsContent(heatmap, overview) + `</div>`)
+	sse.PatchElements(`<div id="content">` + renderMetricsContent(heatmap, overview, latency) + `</div>`)
 }
 
 // ─── Error Content Helper ─────────────────────────────────────

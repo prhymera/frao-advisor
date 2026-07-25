@@ -139,6 +139,11 @@ type HeatmapCell struct {
 	Count      int `json:"count"`
 }
 
+type DayLatency struct {
+	Date          string  `json:"date"`
+	AvgDurationMs float64 `json:"avg_duration_ms"`
+}
+
 type OverviewMetrics struct {
 	TotalAdvice      int       `json:"total_advice"`
 	TotalCost        float64   `json:"total_cost"`

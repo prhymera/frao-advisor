@@ -366,6 +366,34 @@ func (d *DB) UsageHeatmap(ctx context.Context) ([]HeatmapCell, error) {
 	return cells, nil
 }
 
+func (d *DB) DailyLatency(ctx context.Context, days int) ([]DayLatency, error) {
+	query := fmt.Sprintf(`
+		SELECT day, ROUND(AVG(duration), 1) FROM (
+			SELECT date(created_at) AS day, duration_ms AS duration FROM consultations
+				WHERE created_at >= datetime('now', '-%d days')
+			UNION ALL
+			SELECT date(created_at), duration_ms FROM expert_reviews
+				WHERE created_at >= datetime('now', '-%d days')
+			UNION ALL
+			SELECT date(created_at), duration_ms FROM deliberations
+				WHERE created_at >= datetime('now', '-%d days')
+		) GROUP BY day ORDER BY day ASC`, days, days, days)
+	rows, err := d.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var series []DayLatency
+	for rows.Next() {
+		var dl DayLatency
+		if err := rows.Scan(&dl.Date, &dl.AvgDurationMs); err == nil {
+			series = append(series, dl)
+		}
+	}
+	return series, nil
+}
+
 // ─── Advice Timeline ────────────────────────────────────────────────────
 
 type TimelineEntry struct {

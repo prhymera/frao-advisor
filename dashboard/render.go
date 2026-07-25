@@ -170,22 +170,40 @@ func metricCard(label, value string) string {
 
 // ─── Cost Change Indicator ───
 
-func costChangeHTML(today, yesterday, pct float64) string {
-	if today <= 0 && yesterday <= 0 {
-		return ""
-	}
-	if yesterday <= 0 {
-		return `<span class="cost-change">Today: ` + formatCost(today) + `</span>`
-	}
-	arrow := "↑"
-	color := "#ef4444"
-	if pct < 0 {
-		arrow = "↓"
-		color = "#10b981"
-	}
-	abs := math.Abs(pct)
-	return fmt.Sprintf(`<span class="cost-change">Today: %s <span style="color:%s">%s %.1f%%</span></span>`,
 		formatCost(today), color, arrow, abs)
+ }
+
+ // Chart color palette and helpers
+ var chartColors = []string{"#06b6d4", "#f59e0b", "#8b5cf6", "#10b981", "#f43f5e", "#14b8a6", "#ec4899", "#f97316"}
+
+ // typeColors maps advice type to a specific color for consistency.
+ func typeColor(t string) string {
+ 	switch t {
+ 	case "Consultations":
+ 		return "#06b6d4"
+ 	case "Expert Reviews", "expert_review":
+ 		return "#f59e0b"
+ 	case "Deliberations", "deliberation":
+ 		return "#8b5cf6"
+ 	default:
+ 		return "#94a3b8"
+ 	}
+ }
+ 
+ func latencyLabels(series []db.DayLatency) []string {
+ 	l := make([]string, len(series))
+ 	for i, d := range series {
+ 		l[i] = dayLabel(d.Date)
+ 	}
+ 	return l
+ }
+ 
+ func latencyValues(series []db.DayLatency) []float64 {
+ 	v := make([]float64, len(series))
+ 	for i, d := range series {
+ 		v[i] = d.AvgDurationMs
+ 	}
+ 	return v
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -351,14 +369,17 @@ func renderExpertsContent(stats []db.ExpertStat) string {
 
 	// Extract data for charts
 	var keys, costVals, countVals []string
-	for _, s := range stats {
+	var barColors []string
+	for i, s := range stats {
 		keys = append(keys, s.ExpertKey)
 		costVals = append(costVals, fmt.Sprintf("%.6f", s.TotalCost))
 		countVals = append(countVals, fmt.Sprintf("%d", s.Count))
+		barColors = append(barColors, chartColors[i%len(chartColors)])
 	}
 	keysJSON, _ := json.Marshal(keys)
 	costJSON, _ := json.Marshal(costVals)
 	countJSON, _ := json.Marshal(countVals)
+	colorsJSON, _ := json.Marshal(barColors)
 
 	// Charts row
 	b.WriteString(`<div class="chart-grid-2">`)
@@ -367,7 +388,7 @@ func renderExpertsContent(stats []db.ExpertStat) string {
 	b.WriteString(`<div class="card"><div class="card-header">Count by Expert</div>`)
 	b.WriteString(`<div class="chart-container"><canvas id="expert-pie" height="200"></canvas></div></div>`)
 	b.WriteString(`</div>`)
-	b.WriteString(chartScript(`FraoDashboard.bar('expert-bar',` + string(keysJSON) + `,` + string(costJSON) + `,'Cost ($)');FraoDashboard.pie('expert-pie',` + string(keysJSON) + `,` + string(countJSON) + `);`))
+	b.WriteString(chartScript(`FraoDashboard.bar('expert-bar',` + string(keysJSON) + `,` + string(costJSON) + `,'Cost ($)',` + string(colorsJSON) + `);FraoDashboard.pie('expert-pie',` + string(keysJSON) + `,` + string(countJSON) + `);`))
 
 	// Table
 	b.WriteString(`<div class="card"><div class="card-header">Expert Breakdown</div>`)
@@ -490,13 +511,15 @@ func renderCostsContent(modelCosts []db.ModelCost, typeCosts []db.TypeCost, over
 	mvJSON, _ := json.Marshal(modelVals)
 
 	// Chart data: cost by type
-	var typeLabels, typeVals []string
+	var typeLabels, typeVals, typeColors []string
 	for _, t := range typeCosts {
 		typeLabels = append(typeLabels, t.Type)
 		typeVals = append(typeVals, fmt.Sprintf("%.6f", t.Cost))
+		typeColors = append(typeColors, typeColor(t.Type))
 	}
 	tlJSON, _ := json.Marshal(typeLabels)
 	tvJSON, _ := json.Marshal(typeVals)
+	tcJSON, _ := json.Marshal(typeColors)
 
 	// Budget gauge: use 2× total cost as max, min $1
 	budgetMax := overview.TotalCost * 2
@@ -506,7 +529,7 @@ func renderCostsContent(modelCosts []db.ModelCost, typeCosts []db.TypeCost, over
 
 	b.WriteString(chartScript(`FraoDashboard.line('cost-day',` + string(dayLabJSON) + `,` + string(dayValJSON) + `,'Cost');` +
 		`FraoDashboard.pie('cost-model',` + string(mlJSON) + `,` + string(mvJSON) + `);` +
-		`FraoDashboard.bar('cost-type',` + string(tlJSON) + `,` + string(tvJSON) + `,'Cost');` +
+		`FraoDashboard.bar('cost-type',` + string(tlJSON) + `,` + string(tvJSON) + `,'Cost',` + string(tcJSON) + `);` +
 		`FraoDashboard.gauge('cost-gauge',` + fmt.Sprintf("%.6f", overview.TotalCost) + `,`+fmt.Sprintf("%.6f", budgetMax)+`,'Total Cost');`))
 
 	return b.String()
@@ -516,8 +539,8 @@ func renderCostsContent(modelCosts []db.ModelCost, typeCosts []db.TypeCost, over
 // METRICS & HEATMAP
 // ══════════════════════════════════════════════════════════════
 
-func renderMetricsContent(cells []db.HeatmapCell, m *db.OverviewMetrics) string {
-	var b strings.Builder
+func renderMetricsContent(cells []db.HeatmapCell, m *db.OverviewMetrics, latency []db.DayLatency) string {
+ 	var b strings.Builder
 
 	if m.TotalAdvice == 0 {
 		return emptyState("No usage data recorded yet.")
@@ -569,6 +592,20 @@ func renderMetricsContent(cells []db.HeatmapCell, m *db.OverviewMetrics) string 
 		b.WriteString(`</tr>`)
 	}
 	b.WriteString(`</tbody></table></div></div>`)
+
+	// Latency trend chart
+	if len(latency) > 0 {
+		latLabels := latencyLabels(latency)
+		latVals := latencyValues(latency)
+		llJSON, _ := json.Marshal(latLabels)
+		lvJSON, _ := json.Marshal(latVals)
+
+		b.WriteString(`<div class="card">`)
+		b.WriteString(`<div class="card-header">Avg Response Time (30 days)</div>`)
+		b.WriteString(`<div class="chart-container"><canvas id="latency-line" height="160"></canvas></div>`)
+		b.WriteString(`</div>`)
+		b.WriteString(chartScript(`FraoDashboard.latencyLine('latency-line',` + string(llJSON) + `,` + string(lvJSON) + `);`))
+	}
 
 	// Metrics cards
 	peakDayName, peakHourStr := findPeakMetrics(grid, dayNames)
