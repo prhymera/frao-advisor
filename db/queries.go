@@ -450,8 +450,42 @@ func (d *DB) RecentActivity(ctx context.Context, n int) []TimelineEntry {
 	entries, _, _ := d.Timeline(ctx, "", "", n, 0)
 	return entries
 }
+// ─── Deliberations List ──────────────────────────────────────────
 
-// ─── UUID helper ────────────────────────────────────────────────────────
+func (d *DB) DeliberationsList(ctx context.Context, limit, offset int) ([]Deliberation, int, error) {
+	var total int
+	err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM deliberations`).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count deliberations: %w", err)
+	}
+
+	rows, err := d.QueryContext(ctx, `
+		SELECT id, session_id, context, synthesis, expert_count, expert_keys,
+			model, total_prompt_tokens, total_completion_tokens,
+			total_input_cost, total_output_cost, duration_ms, created_at
+		FROM deliberations
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list deliberations: %w", err)
+	}
+	defer rows.Close()
+
+	var result []Deliberation
+	for rows.Next() {
+		var d Deliberation
+		err := rows.Scan(&d.ID, &d.SessionID, &d.Context, &d.Synthesis, &d.ExpertCount,
+			&d.ExpertKeys, &d.Model, &d.TotalPromptTokens, &d.TotalCompletionTokens,
+			&d.TotalInputCost, &d.TotalOutputCost, &d.DurationMs, &d.CreatedAt)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan deliberation: %w", err)
+		}
+		result = append(result, d)
+	}
+	return result, total, rows.Err()
+}
+
+// ─── UUID helper ────────────────────────────────────────────────
 
 func uuidV4() string {
 	b := make([]byte, 16)
