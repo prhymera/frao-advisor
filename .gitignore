@@ -4,3 +4,4 @@ dist/
 advisor.db
 advisor.db-wal
 advisor.db-shm
+.claude/worktrees/

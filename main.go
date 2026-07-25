@@ -13,9 +13,11 @@
 //   DEEPSEEK_API_KEY=sk-... go run .  # or build first
 //
 // Environment variables:
-//   DEEPSEEK_API_KEY   — required: DeepSeek API key
-//   ADVISOR_MODEL      — model name (default: deepseek-v4-pro)
-//   ADVISOR_API_BASE   — API base URL (default: https://api.deepseek.com/v1)
+//   DEEPSEEK_API_KEY            — required: DeepSeek API key
+//   ADVISOR_MODEL               — model name (default: deepseek-v4-pro)
+//   ADVISOR_API_BASE            — API base URL (default: https://api.deepseek.com/v1)
+//   ADVISOR_DASHBOARD_PORT      — dashboard port (default: 9753)
+//   ADVISOR_DASHBOARD_DISABLE   — set to "1" to disable the dashboard
 
 package main
 
@@ -27,6 +29,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/prhymera/frao-advisor/dashboard"
 	"github.com/prhymera/frao-advisor/db"
 )
 
@@ -88,6 +92,19 @@ func main() {
 		log.Printf("persistence active — %s", dbPath)
 	}
 	currentSessionID = persister.EnsureSession("mcp-server-start")
+
+	// Start optional web dashboard
+	if database != nil && getEnv("ADVISOR_DASHBOARD_DISABLE", "") != "1" {
+		port := getEnv("ADVISOR_DASHBOARD_PORT", "9753")
+		dashSrv := dashboard.Start(database, port)
+		defer dashSrv.Close()
+	}
+
+	// ADVISOR_MCP_DISABLE=1 runs dashboard-only (no MCP stdin loop)
+	if getEnv("ADVISOR_MCP_DISABLE", "") == "1" {
+		log.Print("MCP disabled by ADVISOR_MCP_DISABLE — dashboard only")
+		select {}
+	}
 
 	// MCP server: read JSON-RPC requests from stdin, write responses to stdout
 	scanner := bufio.NewScanner(os.Stdin)
@@ -305,9 +322,12 @@ Setup:
     frao-advisor setup .
 
 Environment:
-  DEEPSEEK_API_KEY    DeepSeek API key (required)
-  ADVISOR_MODEL       Model name (default: deepseek-v4-pro)
-  ADVISOR_API_BASE    API base URL (default: https://api.deepseek.com/v1)`)
+  DEEPSEEK_API_KEY              DeepSeek API key (required)
+  ADVISOR_MODEL                 Model name (default: deepseek-v4-pro)
+  ADVISOR_API_BASE              API base URL (default: https://api.deepseek.com/v1)
+  ADVISOR_DB_PATH               SQLite database path (default: ./advisor.db)
+  ADVISOR_DASHBOARD_PORT        Dashboard HTTP port (default: 9753)
+  ADVISOR_DASHBOARD_DISABLE     Set to "1" to disable the dashboard`)
 }
 
 // ─── Tool Call ─────────────────────────────────────────────────────────
