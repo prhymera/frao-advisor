@@ -366,6 +366,34 @@ func (d *DB) UsageHeatmap(ctx context.Context) ([]HeatmapCell, error) {
 	return cells, nil
 }
 
+func (d *DB) DailyLatency(ctx context.Context, days int) ([]DayLatency, error) {
+	query := fmt.Sprintf(`
+		SELECT day, ROUND(AVG(duration), 1) FROM (
+			SELECT date(created_at) AS day, duration_ms AS duration FROM consultations
+				WHERE created_at >= datetime('now', '-%d days')
+			UNION ALL
+			SELECT date(created_at), duration_ms FROM expert_reviews
+				WHERE created_at >= datetime('now', '-%d days')
+			UNION ALL
+			SELECT date(created_at), duration_ms FROM deliberations
+				WHERE created_at >= datetime('now', '-%d days')
+		) GROUP BY day ORDER BY day ASC`, days, days, days)
+	rows, err := d.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var series []DayLatency
+	for rows.Next() {
+		var dl DayLatency
+		if err := rows.Scan(&dl.Date, &dl.AvgDurationMs); err == nil {
+			series = append(series, dl)
+		}
+	}
+	return series, nil
+}
+
 // ─── Advice Timeline ────────────────────────────────────────────────────
 
 type TimelineEntry struct {
@@ -450,8 +478,42 @@ func (d *DB) RecentActivity(ctx context.Context, n int) []TimelineEntry {
 	entries, _, _ := d.Timeline(ctx, "", "", n, 0)
 	return entries
 }
+// ─── Deliberations List ──────────────────────────────────────────
 
-// ─── UUID helper ────────────────────────────────────────────────────────
+func (d *DB) DeliberationsList(ctx context.Context, limit, offset int) ([]Deliberation, int, error) {
+	var total int
+	err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM deliberations`).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count deliberations: %w", err)
+	}
+
+	rows, err := d.QueryContext(ctx, `
+		SELECT id, session_id, context, synthesis, expert_count, expert_keys,
+			model, total_prompt_tokens, total_completion_tokens,
+			total_input_cost, total_output_cost, duration_ms, created_at
+		FROM deliberations
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list deliberations: %w", err)
+	}
+	defer rows.Close()
+
+	var result []Deliberation
+	for rows.Next() {
+		var d Deliberation
+		err := rows.Scan(&d.ID, &d.SessionID, &d.Context, &d.Synthesis, &d.ExpertCount,
+			&d.ExpertKeys, &d.Model, &d.TotalPromptTokens, &d.TotalCompletionTokens,
+			&d.TotalInputCost, &d.TotalOutputCost, &d.DurationMs, &d.CreatedAt)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan deliberation: %w", err)
+		}
+		result = append(result, d)
+	}
+	return result, total, rows.Err()
+}
+
+// ─── UUID helper ────────────────────────────────────────────────
 
 func uuidV4() string {
 	b := make([]byte, 16)

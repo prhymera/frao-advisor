@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Frao Advisor Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2306b6d4'/%3E%3Ctext x='16' y='23' text-anchor='middle' font-size='20' font-weight='bold' fill='%23fff'%3EF%3C/text%3E%3C/svg%3E">
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@starfederation/datastar@v1.2.2/dist/datastar.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link rel="stylesheet" href="/static/style.css">
+<body
+  data-signals="section:'overview';range:'all';typeFilter:'all';expertFilter:'all';limit:20;offset:0"
+>
+  <div class="layout">
+    <!-- ─── Sidebar (desktop) ─── -->
+    <nav class="sidebar" aria-label="Main navigation">
+      <div class="brand">
+        <span class="live-dot"></span>
+        Frao Advisor
+      </div>
+      <div class="nav-items">
+        <a href="#" data-on-click="$$set('section','overview');$$get('/dashboard/overview')" class="nav-item" aria-label="Overview">
+          <span class="nav-icon" aria-hidden="true">&#9632;</span> Overview
+        </a>
+        <a href="#" data-on-click="$$set('section','timeline');$$get('/dashboard/timeline')" class="nav-item" aria-label="Timeline">
+          <span class="nav-icon" aria-hidden="true">&#9776;</span> Timeline
+        </a>
+        <a href="#" data-on-click="$$set('section','experts');$$get('/dashboard/experts')" class="nav-item" aria-label="Experts">
+          <span class="nav-icon" aria-hidden="true">&#9733;</span> Experts
+        </a>
+        <a href="#" data-on-click="$$set('section','deliberations');$$get('/dashboard/deliberations')" class="nav-item" aria-label="Deliberations">
+          <span class="nav-icon" aria-hidden="true">&#9671;</span> Deliberations
+        </a>
+        <a href="#" data-on-click="$$set('section','costs');$$get('/dashboard/costs')" class="nav-item" aria-label="Costs">
+          <span class="nav-icon" aria-hidden="true">&#36;</span> Costs
+        </a>
+        <a href="#" data-on-click="$$set('section','metrics');$$get('/dashboard/metrics')" class="nav-item" aria-label="Metrics">
+          <span class="nav-icon" aria-hidden="true">&#9608;</span> Metrics
+        </a>
+      </div>
+    </nav>
+
+    <!-- ─── Main Content ─── -->
+    <main class="content" id="content" aria-label="Dashboard content">
+      <div class="loading">Loading dashboard...</div>
+    </main>
+  </div>
+
+  <!-- ─── Mobile Bottom Bar ─── -->
+  <nav class="mobile-bar" id="mobile-bar">
+    <a href="#" data-on-click="$$set('section','overview');$$get('/dashboard/overview')" class="mobile-item" aria-label="Overview">
+      <span class="mobile-icon" aria-hidden="true">&#9632;</span>
+      <span class="mobile-label">Overview</span>
+    </a>
+    <a href="#" data-on-click="$$set('section','timeline');$$get('/dashboard/timeline')" class="mobile-item" aria-label="Timeline">
+      <span class="mobile-icon" aria-hidden="true">&#9776;</span>
+      <span class="mobile-label">Timeline</span>
+    </a>
+    <a href="#" data-on-click="$$set('section','experts');$$get('/dashboard/experts')" class="mobile-item" aria-label="Experts">
+      <span class="mobile-icon" aria-hidden="true">&#9733;</span>
+      <span class="mobile-label">Experts</span>
+    </a>
+    <a href="#" data-on-click="$$set('section','costs');$$get('/dashboard/costs')" class="mobile-item" aria-label="Costs">
+      <span class="mobile-icon" aria-hidden="true">&#36;</span>
+      <span class="mobile-label">Costs</span>
+    </a>
+    <a href="#" data-on-click="$$set('section','metrics');$$get('/dashboard/metrics')" class="mobile-item" aria-label="Metrics">
+      <span class="mobile-icon" aria-hidden="true">&#9608;</span>
+      <span class="mobile-label">Metrics</span>
+    </a>
+  </nav>
+
+	  <!-- ─── Global Chart Framework ─── -->
+	  <script>
+	  // Chart.js global defaults — dark theme, animation, tooltips
+	  Chart.defaults.animation.duration = 800;
+	  Chart.defaults.animation.easing = 'easeOutQuart';
+	  Chart.defaults.color = '#94a3b8';
+	  Chart.defaults.borderColor = 'rgba(148,163,184,0.1)';
+	  Chart.defaults.plugins.tooltip.backgroundColor = '#1e293b';
+	  Chart.defaults.plugins.tooltip.titleColor = '#f1f5f9';
+	  Chart.defaults.plugins.tooltip.bodyColor = '#94a3b8';
+	  Chart.defaults.plugins.tooltip.borderColor = 'rgba(148,163,184,0.2)';
+	  Chart.defaults.plugins.tooltip.borderWidth = 1;
+	  Chart.defaults.plugins.tooltip.padding = 10;
+	  Chart.defaults.plugins.tooltip.cornerRadius = 6;
+
+	  // Color palette
+	  var PALETTE = ['#06b6d4','#f59e0b','#8b5cf6','#10b981','#f43f5e','#14b8a6','#ec4899','#f97316'];
+
+	  // Register a plugin for centered text on doughnut/gauge charts
+	  var centerTextPlugin = {
+	    id: 'centerText',
+	    afterDraw: function(chart, args, opts) {
+	      if (!opts || !opts.text) return;
+	      var w = chart.width, h = chart.height, c = chart.ctx;
+	      c.save();
+	      c.textAlign = 'center';
+	      c.textBaseline = 'middle';
+	      var lines = Array.isArray(opts.text) ? opts.text : [opts.text];
+	      var lineH = Math.max(14, h / 12);
+	      var startY = (h - (lines.length - 1) * lineH) / 2;
+	      lines.forEach(function(line, i) {
+	        var isMain = i === 0;
+	        c.font = (isMain ? Math.max(16, h / 10) : Math.max(10, h / 16)).toFixed(0) + 'px "JetBrains Mono", monospace';
+	        c.fillStyle = isMain ? '#f1f5f9' : '#64748b';
+	        c.fillText(String(line), w / 2, startY + i * lineH);
+	      });
+	      c.restore();
+	    }
+	  };
+	  Chart.register(centerTextPlugin);
+
+	  // Respect prefers-reduced-motion: disable chart animations
+	  var motionMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
+	  if (motionMedia.matches) { Chart.defaults.animation = false; }
+	  motionMedia.addEventListener('change', function(e) {
+	    Chart.defaults.animation = !e.matches;
+	  });
+
+	  window.FraoDashboard = {
+	    destroyChart: function(id) {
+	      var existing = Chart.getChart(id);
+	      if (existing) { try { existing.destroy(); } catch(e) {} }
+	    },
+	    create: function(id, config) {
+	      this.destroyChart(id);
+	      var el = document.getElementById(id);
+	      if (!el) return;
+	      var ctx = el.getContext('2d');
+	      if (!ctx) return;
+	      try { new Chart(ctx, config); } catch(e) { console.warn('chart:', id, e); }
+	    },
+
+	    // ── Sparkline (minimal line, no axes) ──
+	    sparkline: function(id, values) {
+	      var labels = values.map(function(_, i) { return i + ''; });
+	      this.create(id, {
+	        type: 'line',
+	        data: { labels: labels, datasets: [{ data: values, borderColor: '#06b6d4', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.4 }] },
+	        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false }, tooltip: { callbacks: { title: function() { return ''; }, label: function(ctx) { return '$' + ctx.parsed.y.toFixed(4); } } } }, scales: { x: { display: false }, y: { display: false } } }
+	      });
+	    },
+
+	    // ── Bar chart ──
+	    bar: function(id, labels, values, label, colors) {
+	      if (!Array.isArray(colors)) {
+	        var c = colors || 'rgba(6,182,212,0.7)';
+	        colors = labels.map(function() { return c; });
+	      }
+	      this.create(id, {
+	        type: 'bar',
+	        data: {
+	          labels: labels,
+	          datasets: [{ label: label || '', data: values, backgroundColor: colors, borderRadius: 4 }]
+	        },
+	        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8' } }, y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8' } } } }
+	      });
+	    },
+
+	    // ── Doughnut with percentage tooltips ──
+	    pie: function(id, labels, values) {
+	      this.create(id, {
+	        type: 'doughnut',
+	        data: {
+	          labels: labels,
+	          datasets: [{ data: values, backgroundColor: PALETTE }]
+	        },
+	        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { labels: { color: '#94a3b8', padding: 12 } }, tooltip: { callbacks: { label: function(ctx) { var t = ctx.dataset.data.reduce(function(a,b){return a+b;},0); return ctx.label + ': ' + ((ctx.parsed/t)*100).toFixed(1) + '%'; } } } } }
+	      });
+	    },
+
+	    // ── Line chart ──
+	    line: function(id, labels, values, label, fill) {
+	      this.create(id, {
+	        type: 'line',
+	        data: {
+	          labels: labels,
+	          datasets: [{
+	            label: label || '', data: values,
+	            borderColor: '#06b6d4', backgroundColor: fill !== false ? 'rgba(6,182,212,0.1)' : 'transparent',
+	            fill: fill !== false, tension: 0.3, pointRadius: 2, pointHoverRadius: 5
+	          }]
+	        },
+	        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', maxTicksLimit: 12 } }, y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8' } } } }
+	      });
+	    },
+
+	    // ── Latency line (formats ms → s in tooltips) ──
+	    latencyLine: function(id, labels, values) {
+	      this.create(id, {
+	        type: 'line',
+	        data: { labels: labels, datasets: [{ label: 'Avg Latency', data: values, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 6 }] },
+	        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { var ms = ctx.parsed.y; return ms < 1000 ? ms.toFixed(0) + 'ms' : (ms/1000).toFixed(1) + 's'; } } } }, scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', maxTicksLimit: 12 } }, y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8', callback: function(v) { return v < 1000 ? v.toFixed(0) + 'ms' : (v/1000).toFixed(1) + 's'; } } } } }
+	      });
+	    },
+
+	    // ── Gauge with colored zones and center text ──
+	    gauge: function(id, value, max, label) {
+	      var pct = max > 0 ? Math.min(value / max, 1) : 0;
+	      var color;
+	      if (pct < 0.5) color = '#10b981';
+	      else if (pct < 0.8) color = '#f59e0b';
+	      else color = '#ef4444';
+	      var disp = value < 0.01 ? value.toFixed(4) : value.toFixed(2);
+	      this.create(id, {
+	        type: 'doughnut',
+	        data: { datasets: [{ data: [value, Math.max(0, max - value)], backgroundColor: [color, 'rgba(148,163,184,0.15)'], borderWidth: 0 }] },
+	        options: { responsive: true, maintainAspectRatio: true, cutout: '80%', plugins: { legend: { display: false }, centerText: { text: ['$' + disp, label || 'Spend'] }, tooltip: { callbacks: { label: function() { return (label || 'Spend') + ': $' + disp; } } } } }
+	      });
+	    }
+	  };
+	  addEventListener('DOMContentLoaded', function() {
+	    setTimeout(function() { Datastar.get('/dashboard/overview'); }, 50);
+	  });
+	  </script>
+</body>
+</html>
