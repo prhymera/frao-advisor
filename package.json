@@ -1,0 +1,22 @@
+{
+  "name": "frao-advisor",
+  "version": "1.0.0",
+  "description": "Expert review, multi-perspective analysis, and second opinions for Claude Code — powered by **DeepSeek V4 Pro** directly. No OpenRouter, no extra costs.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prhymera/frao-advisor.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/prhymera/frao-advisor/issues"
+  },
+  "homepage": "https://github.com/prhymera/frao-advisor#readme",
+  "dependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}

@@ -5,3 +5,6 @@ advisor.db
 advisor.db-wal
 advisor.db-shm
 .claude/worktrees/
+node_modules/
+test-results/
+dashboard/test/test-results.json
