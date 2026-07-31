@@ -409,8 +409,11 @@ type TimelineEntry struct {
 }
 
 func (d *DB) Timeline(ctx context.Context, typeFilter, expertFilter string, limit, offset int) ([]TimelineEntry, int, error) {
-	// Count total matching
-	where := buildTimelineWhere(typeFilter, expertFilter)
+	// Build parameterized WHERE clause
+	where, params := buildTimelineWhere(typeFilter, expertFilter)
+
+	// Count total matching — params replicated for each of 3 subqueries
+	countParams := append(append(params, params...), params...)
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM (
 			SELECT 'consultation' AS type, created_at FROM consultations %s
@@ -420,9 +423,11 @@ func (d *DB) Timeline(ctx context.Context, typeFilter, expertFilter string, limi
 			SELECT 'deliberation', created_at FROM deliberations %s
 		)`, where, where, where)
 	var total int
-	d.QueryRowContext(ctx, countQuery).Scan(&total)
+	d.QueryRowContext(ctx, countQuery, countParams...).Scan(&total)
 
-	// Get entries
+	// Get entries — params again replicated for 3 subqueries
+	dataParams := append(append(params, params...), params...)
+	dataParams = append(dataParams, limit, offset)
 	query := fmt.Sprintf(`
 		SELECT id, type, summary, expert, model, cost, tokens, duration_ms, created_at FROM (
 			SELECT id, 'consultation' AS type, substr(question, 1, 120) AS summary,
@@ -441,7 +446,7 @@ func (d *DB) Timeline(ctx context.Context, typeFilter, expertFilter string, limi
 			FROM deliberations %s
 		) ORDER BY created_at DESC LIMIT ? OFFSET ?`, where, where, where)
 
-	rows, err := d.QueryContext(ctx, query, limit, offset)
+	rows, err := d.QueryContext(ctx, query, dataParams...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -457,19 +462,23 @@ func (d *DB) Timeline(ctx context.Context, typeFilter, expertFilter string, limi
 	return entries, total, nil
 }
 
-func buildTimelineWhere(typeFilter, expertFilter string) string {
+// buildTimelineWhere returns a parameterized WHERE clause and its bound values.
+// The clause is a SQL fragment with ? placeholders, replicated for each subquery.
+func buildTimelineWhere(typeFilter, expertFilter string) (string, []any) {
 	var clauses []string
+	var params []any
 	if typeFilter != "" && typeFilter != "all" {
 		// Can't filter by type here because the WHERE is per-subquery
 		// We don't apply it — filtering happens in the caller if needed
 	}
 	if expertFilter != "" && expertFilter != "all" {
-		clauses = append(clauses, fmt.Sprintf("expert_key = '%s'", expertFilter))
+		clauses = append(clauses, "expert_key = ?")
+		params = append(params, expertFilter)
 	}
 	if len(clauses) == 0 {
-		return ""
+		return "", nil
 	}
-	return " WHERE " + strings.Join(clauses, " AND ")
+	return " WHERE " + strings.Join(clauses, " AND "), params
 }
 
 // ─── Recent Activity ────────────────────────────────────────────────────
