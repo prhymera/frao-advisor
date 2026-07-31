@@ -490,13 +490,12 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 	log.Printf("multi-perspective — %d experts: %s, effort=%s", len(selectedExperts), strings.Join(selectedExperts, ", "), effort)
 
 	// Step 1: Run each expert (sequentially to respect API rate limits)
-	type perspective struct {
-		Key      string
-		Name     string
-		Analysis string
+	type contribution struct {
+		Key    string
+		Result *ChatResult
 	}
 
-	var perspectives []perspective
+	var contributions []contribution
 	for i, key := range selectedExperts {
 		expert := experts[key]
 		log.Printf("multi-perspective — consulting %s (%d/%d)...", expert.Name, i+1, len(selectedExperts))
@@ -505,13 +504,13 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 		system := fmt.Sprintf("%s\n\nReasoning effort: %s\nYou are one of %d experts reviewing this. Focus solely on your domain. Do not defer to or repeat other perspectives.",
 			expert.SystemPrompt, effort, len(selectedExperts))
 
-		analysis, err := client.Chat(system, context, 0.15, 8192)
+		result, err := client.ChatWithUsage(system, context, 0.15, 8192)
 		if err != nil {
 			log.Printf("multi-perspective %s error: %v", key, err)
-			analysis = fmt.Sprintf("[Error consulting %s: %v]", expert.Name, err)
+			result = &ChatResult{Text: fmt.Sprintf("[Error consulting %s: %v]", expert.Name, err), Model: client.model}
 		}
-		log.Printf("multi-perspective — %s: got %d bytes", key, len(analysis))
-		perspectives = append(perspectives, perspective{Key: key, Name: expert.Name, Analysis: analysis})
+		log.Printf("multi-perspective — %s: got %d bytes", key, len(result.Text))
+		contributions = append(contributions, contribution{Key: key, Result: result})
 	}
 
 	// Step 2: Build synthesis input
@@ -519,28 +518,30 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 	sendProgress(progressToken, float64(len(selectedExperts))/total, total, "Synthesizing expert perspectives...")
 
 	var parts []string
-	for _, p := range perspectives {
-		parts = append(parts, fmt.Sprintf("=== %s (%s) ===\n%s", p.Name, p.Key, p.Analysis))
+	for _, c := range contributions {
+		parts = append(parts, fmt.Sprintf("=== %s (%s) ===\n%s", experts[c.Key].Name, c.Key, c.Result.Text))
 	}
 
 	synthesisInput := fmt.Sprintf("Synthesize the following expert perspectives into a unified recommendation.\n\nIdentify:\n  1. Areas of agreement\n  2. Areas of disagreement\n  3. Critical findings\n  4. Final recommendation\n\n%s", strings.Join(parts, "\n\n"))
 
-	synthesis, err := client.Chat(synthesisSystemPrompt, synthesisInput, 0.2, 4096)
-	if err != nil {
-		log.Printf("synthesis error: %v", err)
-		synthesis = fmt.Sprintf("[Synthesis failed: %v]", err)
-	}
+		synthesisResult, err := client.ChatWithUsage(synthesisSystemPrompt, synthesisInput, 0.2, 4096)
+		if err != nil {
+			log.Printf("synthesis error: %v", err)
+			synthesisResult = &ChatResult{Text: fmt.Sprintf("[Synthesis failed: %v]", err), Model: client.model}
+		}
+		synthesis := synthesisResult.Text
+
 
 	sendProgress(progressToken, total, total, "Multi-perspective analysis complete")
 	log.Print("multi-perspective — complete")
 
 	// Build output
 	var out strings.Builder
-	for _, p := range perspectives {
+	for _, c := range contributions {
 		fmt.Fprintf(&out, "═══════════════════════════════════════\n")
-		fmt.Fprintf(&out, "  🧠 %s (%s)\n", p.Name, p.Key)
+		fmt.Fprintf(&out, "  🧠 %s\n", experts[c.Key].Name)
 		fmt.Fprintf(&out, "═══════════════════════════════════════\n")
-		out.WriteString(p.Analysis)
+		out.WriteString(c.Result.Text)
 		out.WriteString("\n\n")
 	}
 	fmt.Fprintf(&out, "═══════════════════════════════════════\n")
@@ -548,7 +549,16 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 	fmt.Fprintf(&out, "═══════════════════════════════════════\n")
 	out.WriteString(synthesis)
 
-	return textResult(out.String())
+	// Persist the deliberation
+		if persister != nil {
+			var cons []ContributionResult
+			for _, c := range contributions {
+				cons = append(cons, ContributionResult{ExpertKey: c.Key, Result: c.Result})
+			}
+			persister.CaptureDeliberation(currentSessionID, context, synthesis, selectedExperts, effort, cons, synthesisResult)
+		}
+
+		return textResult(out.String())
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
