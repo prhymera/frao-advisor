@@ -110,12 +110,22 @@ func badgeLabel(t string) string {
 
 // friendlyTime converts an ISO timestamp to a relative human-readable form.
 func friendlyTime(iso string) string {
-	t, err := time.Parse("2006-01-02T15:04:05Z", iso)
-	if err != nil {
-		t, err = time.Parse("2006-01-02T15:04:05", iso)
-		if err != nil {
-			return iso
+	layouts := []string{
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+	}
+	var t time.Time
+	var err error
+	for _, layout := range layouts {
+		t, err = time.Parse(layout, iso)
+		if err == nil {
+			break
 		}
+	}
+	if err != nil {
+		return iso
 	}
 	now := time.Now().UTC()
 	diff := now.Sub(t)
@@ -264,7 +274,7 @@ func renderOverviewContent(m *db.OverviewMetrics) string {
 func renderFilterBar(typeFilter, expertFilter string) string {
 	var b strings.Builder
 	b.WriteString(`<div class="filter-bar">`)
-	b.WriteString(`<select data-bind="typeFilter" data-on-change="$$set('offset',0);$$get('/dashboard/timeline')">`)
+	b.WriteString(`<select onchange="dashboardFilter(this.value)">`)
 	type opts struct {
 		value, label string
 	}
@@ -298,7 +308,7 @@ func renderTimelineContent(entries []db.TimelineEntry, total, limit, offset int,
 	b.WriteString(`<div class="timeline-list">`)
 
 	for _, e := range entries {
-		b.WriteString(`<div class="timeline-entry">`)
+		fmt.Fprintf(&b, `<div class="timeline-entry" style="cursor:pointer" data-on-click="$$get('/dashboard/detail?type=%s&amp;id=%s')">`, e.Type, e.ID)
 		b.WriteString(`<span class="timeline-badge badge-` + e.Type + `">` + badgeLabel(e.Type) + `</span>`)
 		b.WriteString(`<div class="timeline-body">`)
 		b.WriteString(`<div class="timeline-summary">` + html.EscapeString(truncate(e.Summary, 120)) + `</div>`)

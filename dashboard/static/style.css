@@ -95,6 +95,7 @@ html, body {
 
 .content {
   flex: 1;
+  min-width: 0; /* allow shrink below children's intrinsic width (e.g. <select>) */
   margin-left: 220px;
   padding: 24px;
   min-height: 100vh;
@@ -240,6 +241,7 @@ html, body {
 /* ─── Timeline ─── */
 .filter-bar {
   display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+  min-width: 0; max-width: 100%;
 }
 
 .filter-bar select {
@@ -266,6 +268,7 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+  min-width: 0; max-width: 100%;
 }
 
 .timeline-entry {
@@ -273,6 +276,7 @@ html, body {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   transition: background 0.1s;
+  min-width: 0; max-width: 100%;
 }
 
 .timeline-entry:last-child { border-bottom: none; }
@@ -618,7 +622,7 @@ tbody tr:hover td {
 @media (max-width: 768px) {
   .sidebar { display: none; }
   .mobile-bar { display: flex; }
-  .content { margin-left: 0; padding: 16px; padding-bottom: 72px; }
+  .content { margin-left: 0; padding: 16px; padding-bottom: 96px; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
   .quick-stats { grid-template-columns: 1fr; }
   .chart-grid-2 { grid-template-columns: 1fr; }
@@ -637,7 +641,7 @@ tbody tr:hover td {
 @media (max-width: 480px) {
   .kpi-grid { grid-template-columns: 1fr; }
   .metrics-grid { grid-template-columns: 1fr; }
-  .content { padding: 12px; padding-bottom: 64px; }
+  .content { padding: 12px; padding-bottom: 88px; }
   .kpi-value { font-size: 20px; }
   .mobile-item { min-height: 44px; min-width: 44px; font-size: 10px; }
   .timeline-meta { gap: 8px; }

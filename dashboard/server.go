@@ -10,16 +10,23 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/prhymera/frao-advisor/db"
 )
 
-//go:embed templates/layout.gohtml static/style.css
+//go:embed templates/layout.gohtml static/style.css static/datastar.js static/chart.umd.min.js static/dashboard.js
 var contentFS embed.FS
 
 // Start launches the dashboard HTTP server in a background goroutine.
 // Returns the *http.Server so the caller can shut it down.
+func getBindAddr() string {
+	if h := os.Getenv("ADVISOR_DASHBOARD_HOST"); h != "" {
+		return h
+	}
+	return "127.0.0.1" // security-by-default; override via ADVISOR_DASHBOARD_HOST
+}
 func Start(database *db.DB, port string) *http.Server {
 	layout := template.Must(template.ParseFS(contentFS, "templates/layout.gohtml"))
 
@@ -41,18 +48,19 @@ func Start(database *db.DB, port string) *http.Server {
 	mux.HandleFunc("GET /", h.LayoutPage)
 	mux.HandleFunc("GET /dashboard", h.LayoutPage)
 
-	// SSE routes (6 views)
+	// SSE routes (7 views)
 	mux.HandleFunc("GET /dashboard/overview", h.Overview)
 	mux.HandleFunc("GET /dashboard/timeline", h.Timeline)
 	mux.HandleFunc("GET /dashboard/experts", h.Experts)
 	mux.HandleFunc("GET /dashboard/deliberations", h.Deliberations)
 	mux.HandleFunc("GET /dashboard/costs", h.Costs)
 	mux.HandleFunc("GET /dashboard/metrics", h.Metrics)
+	mux.HandleFunc("GET /dashboard/detail", h.Detail)
 	// CSV export
 	mux.HandleFunc("GET /export/csv", h.CSVExport)
 
 	srv := &http.Server{
-		Addr:    ":" + port,
+		Addr:    getBindAddr() + ":" + port,
 		Handler: mux,
 	}
 

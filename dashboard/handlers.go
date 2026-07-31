@@ -1,9 +1,13 @@
 package dashboard
 
 import (
+	"context"
+	"fmt"
+	"html"
 	"html/template"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/prhymera/frao-advisor/db"
 	"github.com/starfederation/datastar-go/datastar"
@@ -55,12 +59,22 @@ func (h *Handlers) Timeline(w http.ResponseWriter, r *http.Request) {
 	sse := datastar.NewSSE(w, r)
 	ctx := r.Context()
 
-	// Read signals for filters
+	// Read filters — prefer URL query params (vanilla JS client),
+	// fall back to Datastar signals for compatibility.
+	typeFilter := r.URL.Query().Get("typeFilter")
+	expertFilter := r.URL.Query().Get("expertFilter")
+
 	var signals struct {
 		TypeFilter   string `json:"typeFilter"`
 		ExpertFilter string `json:"expertFilter"`
 	}
 	_ = datastar.ReadSignals(r, &signals)
+	if typeFilter == "" {
+		typeFilter = signals.TypeFilter
+	}
+	if expertFilter == "" {
+		expertFilter = signals.ExpertFilter
+	}
 
 	// Read pagination from URL query params
 	limit := 20
@@ -81,14 +95,14 @@ func (h *Handlers) Timeline(w http.ResponseWriter, r *http.Request) {
 	var total int
 	var err error
 
-	if signals.TypeFilter != "" && signals.TypeFilter != "all" {
+	if typeFilter != "" && typeFilter != "all" {
 		// Fetch generously and filter in-memory
-		entries, _, err = h.DB.Timeline(ctx, "", signals.ExpertFilter, 10000, 0)
+		entries, _, err = h.DB.Timeline(ctx, "", expertFilter, 10000, 0)
 		if err != nil {
 			sse.PatchElements(errorContent("Unable to load timeline", err.Error()))
 			return
 		}
-		entries = filterByType(entries, signals.TypeFilter)
+		entries = filterByType(entries, typeFilter)
 		total = len(entries)
 		if offset >= total {
 			offset = 0
@@ -99,14 +113,14 @@ func (h *Handlers) Timeline(w http.ResponseWriter, r *http.Request) {
 		}
 		entries = entries[offset:end]
 	} else {
-		entries, total, err = h.DB.Timeline(ctx, "", signals.ExpertFilter, limit, offset)
+		entries, total, err = h.DB.Timeline(ctx, "", expertFilter, limit, offset)
 		if err != nil {
 			sse.PatchElements(errorContent("Unable to load timeline", err.Error()))
 			return
 		}
 	}
 
-	sse.PatchElements(`<div id="content">` + renderTimelineContent(entries, total, limit, offset, signals.TypeFilter, signals.ExpertFilter) + `</div>`)
+	sse.PatchElements(`<div id="content">` + renderTimelineContent(entries, total, limit, offset, typeFilter, expertFilter) + `</div>`)
 }
 
 // ─── Experts ─────────────────────────────────────────────────
@@ -221,6 +235,122 @@ func (h *Handlers) Metrics(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── Error Content Helper ─────────────────────────────────────
+
+
+
+// ─── Detail ────────────────────────────────────────────────────
+
+func (h *Handlers) Detail(w http.ResponseWriter, r *http.Request) {
+	if !isDatastarReq(r) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	sse := datastar.NewSSE(w, r)
+	ctx := r.Context()
+
+	typeStr := r.URL.Query().Get("type")
+	id := r.URL.Query().Get("id")
+
+	if typeStr == "" || id == "" {
+		sse.PatchElements(errorContent("Missing parameters", "type and id are required"))
+		return
+	}
+
+	var html string
+	var err error
+	switch typeStr {
+	case "consultation":
+		html, err = h.renderConsultationDetail(ctx, id)
+	case "expert_review":
+		html, err = h.renderExpertReviewDetail(ctx, id)
+	case "deliberation":
+		html, err = h.renderDeliberationDetail(ctx, id)
+	default:
+		sse.PatchElements(errorContent("Unknown type", typeStr))
+		return
+	}
+
+	if err != nil {
+		sse.PatchElements(errorContent("Unable to load detail", err.Error()))
+		return
+	}
+
+	sse.PatchElements(`<div id="content">` + html + `</div>`)
+}
+
+
+
+// ─── Detail Rendering Helpers ────────────────────────────────
+
+func (h *Handlers) renderConsultationDetail(ctx context.Context, id string) (string, error) {
+	var c db.Consultation
+	err := h.DB.QueryRowContext(ctx,
+		"SELECT id, session_id, question, response, model, prompt_tokens, completion_tokens, input_cost, output_cost, duration_ms, created_at FROM consultations WHERE id = ?", id,
+	).Scan(&c.ID, &c.SessionID, &c.Question, &c.Response, &c.Model,
+		&c.PromptTokens, &c.CompletionTokens, &c.InputCost, &c.OutputCost, &c.DurationMs, &c.CreatedAt)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div class="detail-view">`)
+	b.WriteString(`<a href="#" class="btn" style="margin-bottom:16px;display:inline-block" data-on-click="$$get('/dashboard/timeline')">&larr; Back to Timeline</a>`)
+	b.WriteString(`<div class="card"><div class="card-header">Consultation <span class="badge-consultation" style="padding:2px 8px;border-radius:4px;font-size:10px;background:rgba(6,182,212,0.15);color:#06b6d4">` + c.Model + `</span></div>`)
+	b.WriteString(`<table><tbody>`)
+	fmt.Fprintf(&b, `<tr><td style="width:100px;font-weight:600">Question</td><td>%s</td></tr>`, html.EscapeString(c.Question))
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600;vertical-align:top">Response</td><td style="white-space:pre-wrap">%s</td></tr>`, html.EscapeString(c.Response))
+	tok := formatNumber(c.PromptTokens+c.CompletionTokens) + " (" + formatNumber(c.PromptTokens) + " prompt + " + formatNumber(c.CompletionTokens) + " completion)"
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600">Tokens</td><td>%s</td></tr>`, tok)
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600">Cost</td><td>%s</td></tr>`, formatCost(c.InputCost+c.OutputCost))
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600">Duration</td><td>%s</td></tr>`, formatDuration(c.DurationMs))
+	b.WriteString(`</tbody></table></div></div>`)
+	return b.String(), nil
+}
+
+func (h *Handlers) renderExpertReviewDetail(ctx context.Context, id string) (string, error) {
+	var r db.ExpertReview
+	err := h.DB.QueryRowContext(ctx,
+		"SELECT id, session_id, expert_key, context, analysis, model, prompt_tokens, completion_tokens, input_cost, output_cost, duration_ms, created_at FROM expert_reviews WHERE id = ?", id,
+	).Scan(&r.ID, &r.SessionID, &r.ExpertKey, &r.Context, &r.Analysis, &r.Model,
+		&r.PromptTokens, &r.CompletionTokens, &r.InputCost, &r.OutputCost, &r.DurationMs, &r.CreatedAt)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div class="detail-view">`)
+	b.WriteString(`<a href="#" class="btn" style="margin-bottom:16px;display:inline-block" data-on-click="$$get('/dashboard/timeline')">&larr; Back to Timeline</a>`)
+	b.WriteString(`<div class="card"><div class="card-header">Expert Review: ` + html.EscapeString(r.ExpertKey) + `</div>`)
+	b.WriteString(`<table><tbody>`)
+	fmt.Fprintf(&b, `<tr><td style="width:100px;font-weight:600">Context</td><td>%s</td></tr>`, html.EscapeString(truncate(r.Context, 500)))
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600;vertical-align:top">Analysis</td><td style="white-space:pre-wrap">%s</td></tr>`, html.EscapeString(r.Analysis))
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600">Model</td><td>%s</td></tr>`, html.EscapeString(r.Model))
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600">Cost</td><td>%s</td></tr>`, formatCost(r.InputCost+r.OutputCost))
+	b.WriteString(`</tbody></table></div></div>`)
+	return b.String(), nil
+}
+
+func (h *Handlers) renderDeliberationDetail(ctx context.Context, id string) (string, error) {
+	var d db.Deliberation
+	err := h.DB.QueryRowContext(ctx,
+		"SELECT id, session_id, context, synthesis, expert_count, expert_keys, model, total_prompt_tokens, total_completion_tokens, total_input_cost, total_output_cost, duration_ms, created_at FROM deliberations WHERE id = ?", id,
+	).Scan(&d.ID, &d.SessionID, &d.Context, &d.Synthesis, &d.ExpertCount, &d.ExpertKeys, &d.Model,
+		&d.TotalPromptTokens, &d.TotalCompletionTokens, &d.TotalInputCost, &d.TotalOutputCost, &d.DurationMs, &d.CreatedAt)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div class="detail-view">`)
+	b.WriteString(`<a href="#" class="btn" style="margin-bottom:16px;display:inline-block" data-on-click="$$get('/dashboard/deliberations')">&larr; Back to Deliberations</a>`)
+	b.WriteString(`<div class="card"><div class="card-header">Deliberation (` + fmt.Sprintf("%d", d.ExpertCount) + ` experts)</div>`)
+	b.WriteString(`<table><tbody>`)
+	fmt.Fprintf(&b, `<tr><td style="width:100px;font-weight:600">Context</td><td>%s</td></tr>`, html.EscapeString(truncate(d.Context, 500)))
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600;vertical-align:top">Synthesis</td><td style="white-space:pre-wrap">%s</td></tr>`, html.EscapeString(d.Synthesis))
+	fmt.Fprintf(&b, `<tr><td style="font-weight:600">Cost</td><td>%s</td></tr>`, formatCost(d.TotalInputCost+d.TotalOutputCost))
+	b.WriteString(`</tbody></table></div></div>`)
+	return b.String(), nil
+}
 
 func errorContent(title, detail string) string {
 	return `<div id="content"><div class="empty-state"><div class="empty-icon">&#9888;</div><h2>` + title + `</h2><p class="empty-desc">` + detail + `</p><a href="#" onclick="location.reload()" class="retry-link">Reload</a></div></div>`
