@@ -1,26 +1,52 @@
 // ─── Frao Advisor Dashboard ───
 // Vanilla JS SPA loader. No framework dependencies.
 // Fetches Datastar-style SSE fragments from the Go server and patches #content.
+// Theme-aware: every chart color is resolved from CSS custom properties so a
+// theme switch just re-renders the current view with the new palette.
 
 // ════════════════════════════════════════════════════════════════════════════
-// Chart.js defaults + FraoDashboard chart helper framework
+// Theme helpers
 // ════════════════════════════════════════════════════════════════════════════
 
-// Chart.js global defaults — dark theme, animation, tooltips
-Chart.defaults.animation.duration = 800;
-Chart.defaults.animation.easing = 'easeOutQuart';
-Chart.defaults.color = '#94a3b8';
-Chart.defaults.borderColor = 'rgba(148,163,184,0.1)';
-Chart.defaults.plugins.tooltip.backgroundColor = '#1e293b';
-Chart.defaults.plugins.tooltip.titleColor = '#f1f5f9';
-Chart.defaults.plugins.tooltip.bodyColor = '#94a3b8';
-Chart.defaults.plugins.tooltip.borderColor = 'rgba(148,163,184,0.2)';
-Chart.defaults.plugins.tooltip.borderWidth = 1;
-Chart.defaults.plugins.tooltip.padding = 10;
-Chart.defaults.plugins.tooltip.cornerRadius = 6;
+var THEMES = ['precision', 'neutral', 'observatory'];
 
-// Color palette
-var PALETTE = ['#06b6d4','#f59e0b','#8b5cf6','#10b981','#f43f5e','#14b8a6','#ec4899','#f97316'];
+// Read a CSS custom property off the <html> element (the theme source of truth).
+function cssVar(name, fallback) {
+  var v = getComputedStyle(document.documentElement).getPropertyValue(name);
+  v = (v || '').trim();
+  return v || fallback;
+}
+
+// Resolve a color value that may be a CSS var key (e.g. 'chart-1') or a literal hex.
+function resolveColor(key) {
+  if (typeof key === 'string' && key.indexOf('chart-') === 0) {
+    var v = cssVar('--' + key);
+    if (v) return v;
+  }
+  return key || cssVar('--accent', '#2dd4bf');
+}
+
+function themePalette() {
+  var p = [];
+  for (var i = 1; i <= 8; i++) { p.push(cssVar('--chart-' + i, '#2dd4bf')); }
+  return p;
+}
+
+// Apply theme-aware global Chart.js defaults (called before every chart create,
+// so a theme switch picked up by a view reload re-colors every chart).
+function applyChartDefaults() {
+  Chart.defaults.animation.duration = 800;
+  Chart.defaults.animation.easing = 'easeOutQuart';
+  Chart.defaults.color = cssVar('--text', '#9aa7b8');
+  Chart.defaults.borderColor = cssVar('--border', 'rgba(148,163,184,0.1)');
+  Chart.defaults.plugins.tooltip.backgroundColor = cssVar('--surface', '#131a24');
+  Chart.defaults.plugins.tooltip.titleColor = cssVar('--text-heading', '#eef2f6');
+  Chart.defaults.plugins.tooltip.bodyColor = cssVar('--text', '#9aa7b8');
+  Chart.defaults.plugins.tooltip.borderColor = cssVar('--border-strong', 'rgba(148,163,184,0.2)');
+  Chart.defaults.plugins.tooltip.borderWidth = 1;
+  Chart.defaults.plugins.tooltip.padding = 10;
+  Chart.defaults.plugins.tooltip.cornerRadius = 6;
+}
 
 // Register a plugin for centered text on doughnut/gauge charts
 var centerTextPlugin = {
@@ -36,8 +62,8 @@ var centerTextPlugin = {
     var startY = (h - (lines.length - 1) * lineH) / 2;
     lines.forEach(function(line, i) {
       var isMain = i === 0;
-      c.font = (isMain ? Math.max(16, h / 10) : Math.max(10, h / 16)).toFixed(0) + 'px "JetBrains Mono", monospace';
-      c.fillStyle = isMain ? '#f1f5f9' : '#64748b';
+      c.font = (isMain ? Math.max(16, h / 10) : Math.max(10, h / 16)).toFixed(0) + 'px ' + cssVar('--font-mono', '"JetBrains Mono", monospace');
+      c.fillStyle = isMain ? cssVar('--text-heading', '#f1f5f9') : cssVar('--text-dim', '#64748b');
       c.fillText(String(line), w / 2, startY + i * lineH);
     });
     c.restore();
@@ -63,6 +89,7 @@ window.FraoDashboard = {
     if (!el) return;
     var ctx = el.getContext('2d');
     if (!ctx) return;
+    applyChartDefaults();
     try { new Chart(ctx, config); } catch(e) { console.warn('chart:', id, e); }
   },
 
@@ -70,28 +97,30 @@ window.FraoDashboard = {
     var labels = values.map(function(_, i) { return i + ''; });
     this.create(id, {
       type: 'line',
-      data: { labels: labels, datasets: [{ data: values, borderColor: '#06b6d4', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.4 }] },
+      data: { labels: labels, datasets: [{ data: values, borderColor: cssVar('--accent', '#06b6d4'), backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.4 }] },
       options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false }, tooltip: { callbacks: { title: function() { return ''; }, label: function(ctx) { return '$' + ctx.parsed.y.toFixed(4); } } } }, scales: { x: { display: false }, y: { display: false } } }
     });
   },
 
   bar: function(id, labels, values, label, colors) {
     if (!Array.isArray(colors)) {
-      var c = colors || 'rgba(6,182,212,0.7)';
+      var c = colors || cssVar('--accent', 'rgba(6,182,212,0.7)');
       colors = labels.map(function() { return c; });
+    } else {
+      colors = colors.map(resolveColor);
     }
     this.create(id, {
       type: 'bar',
       data: { labels: labels, datasets: [{ label: label || '', data: values, backgroundColor: colors, borderRadius: 4 }] },
-      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8' } }, y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8' } } } }
+      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: cssVar('--text', '#94a3b8') } }, y: { grid: { color: cssVar('--border', 'rgba(148,163,184,0.1)') }, ticks: { color: cssVar('--text', '#94a3b8') } } } }
     });
   },
 
   pie: function(id, labels, values) {
     this.create(id, {
       type: 'doughnut',
-      data: { labels: labels, datasets: [{ data: values, backgroundColor: PALETTE }] },
-      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { labels: { color: '#94a3b8', padding: 12 } }, tooltip: { callbacks: { label: function(ctx) { var t = ctx.dataset.data.reduce(function(a,b){return a+b;},0); return ctx.label + ': ' + ((ctx.parsed/t)*100).toFixed(1) + '%'; } } } } }
+      data: { labels: labels, datasets: [{ data: values, backgroundColor: themePalette() }] },
+      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { labels: { color: cssVar('--text', '#94a3b8'), padding: 12 } }, tooltip: { callbacks: { label: function(ctx) { var t = ctx.dataset.data.reduce(function(a,b){return a+b;},0); return ctx.label + ': ' + ((ctx.parsed/t)*100).toFixed(1) + '%'; } } } } }
     });
   },
 
@@ -102,36 +131,74 @@ window.FraoDashboard = {
         labels: labels,
         datasets: [{
           label: label || '', data: values,
-          borderColor: '#06b6d4', backgroundColor: fill !== false ? 'rgba(6,182,212,0.1)' : 'transparent',
+          borderColor: cssVar('--accent', '#06b6d4'), backgroundColor: fill !== false ? cssVar('--accent-dim', 'rgba(6,182,212,0.1)') : 'transparent',
           fill: fill !== false, tension: 0.3, pointRadius: 2, pointHoverRadius: 5
         }]
       },
-      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', maxTicksLimit: 12 } }, y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8' } } } }
+      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: cssVar('--text', '#94a3b8'), maxTicksLimit: 12 } }, y: { grid: { color: cssVar('--border', 'rgba(148,163,184,0.1)') }, ticks: { color: cssVar('--text', '#94a3b8') } } } }
     });
   },
 
   latencyLine: function(id, labels, values) {
     this.create(id, {
       type: 'line',
-      data: { labels: labels, datasets: [{ label: 'Avg Latency', data: values, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 6 }] },
-      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { var ms = ctx.parsed.y; return ms < 1000 ? ms.toFixed(0) + 'ms' : (ms/1000).toFixed(1) + 's'; } } } }, scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', maxTicksLimit: 12 } }, y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8', callback: function(v) { return v < 1000 ? v.toFixed(0) + 'ms' : (v/1000).toFixed(1) + 's'; } } } } }
+      data: { labels: labels, datasets: [{ label: 'Avg Latency', data: values, borderColor: cssVar('--purple', '#8b5cf6'), backgroundColor: 'rgba(139,92,246,0.1)', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 6 }] },
+      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { var ms = ctx.parsed.y; return ms < 1000 ? ms.toFixed(0) + 'ms' : (ms/1000).toFixed(1) + 's'; } } } }, scales: { x: { grid: { display: false }, ticks: { color: cssVar('--text', '#94a3b8'), maxTicksLimit: 12 } }, y: { grid: { color: cssVar('--border', 'rgba(148,163,184,0.1)') }, ticks: { color: cssVar('--text', '#94a3b8'), callback: function(v) { return v < 1000 ? v.toFixed(0) + 'ms' : (v/1000).toFixed(1) + 's'; } } } } }
     });
   },
 
   gauge: function(id, value, max, label) {
     var pct = max > 0 ? Math.min(value / max, 1) : 0;
     var color;
-    if (pct < 0.5) color = '#10b981';
-    else if (pct < 0.8) color = '#f59e0b';
-    else color = '#ef4444';
+    if (pct < 0.5) color = cssVar('--green', '#10b981');
+    else if (pct < 0.8) color = cssVar('--highlight', '#f59e0b');
+    else color = cssVar('--red', '#ef4444');
     var disp = value < 0.01 ? value.toFixed(4) : value.toFixed(2);
     this.create(id, {
       type: 'doughnut',
-      data: { datasets: [{ data: [value, Math.max(0, max - value)], backgroundColor: [color, 'rgba(148,163,184,0.15)'], borderWidth: 0 }] },
+      data: { datasets: [{ data: [value, Math.max(0, max - value)], backgroundColor: [color, cssVar('--border-strong', 'rgba(148,163,184,0.15)')], borderWidth: 0 }] },
       options: { responsive: true, maintainAspectRatio: true, cutout: '80%', plugins: { legend: { display: false }, centerText: { text: ['$' + disp, label || 'Spend'] }, tooltip: { callbacks: { label: function() { return (label || 'Spend') + ': $' + disp; } } } } }
     });
   }
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// Theme switcher + active navigation
+// ════════════════════════════════════════════════════════════════════════════
+
+window.setAdvisorTheme = function(name) {
+  if (THEMES.indexOf(name) === -1) return;
+  document.documentElement.setAttribute('data-theme', name);
+  try { localStorage.setItem('frao-advisor-theme', name); } catch(e) {}
+  updateThemeButtons(name);
+  // Re-render the current view so charts pick up the new palette.
+  if (currentView) { loadView(currentView); }
+};
+
+window.cycleAdvisorTheme = function() {
+  var cur = document.documentElement.getAttribute('data-theme') || 'precision';
+  var i = THEMES.indexOf(cur);
+  if (i === -1) { i = 0; }
+  setAdvisorTheme(THEMES[(i + 1) % THEMES.length]);
+};
+
+function updateThemeButtons(name) {
+  var btns = document.querySelectorAll('.theme-btn');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].classList.toggle('active', btns[i].getAttribute('data-theme') === name);
+  }
+}
+
+var NAV_VIEWS = ['overview', 'timeline', 'experts', 'deliberations', 'costs', 'metrics'];
+
+function updateNav(path) {
+  var key = (path || '').replace(/^\/dashboard\//, '').split('?')[0];
+  if (NAV_VIEWS.indexOf(key) === -1) return; // detail views keep the parent highlight
+  var items = document.querySelectorAll('[data-nav]');
+  for (var i = 0; i < items.length; i++) {
+    items[i].classList.toggle('active', items[i].getAttribute('data-nav') === key);
+  }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // View Loader — fetches SSE fragment and patches #content
@@ -148,6 +215,7 @@ function loadView(url) {
 
   // Remember the view the user is on (before query-string params).
   currentView = url.split('?')[0];
+  updateNav(currentView);
 
   // Cancel any in-flight request to avoid racing patches
   if (currentAbort) { currentAbort.abort(); }
@@ -285,6 +353,19 @@ document.addEventListener('click', function(e) {
     loadView('/dashboard/detail?type=' + encodeURIComponent(detailMatch[1]) + '&id=' + encodeURIComponent(detailMatch[2]));
     return;
   }
+
+  // Handle $$toggle('signalName') — toggles .open on elements carrying
+  // data-class-open="signalName" (used by the Deliberations accordion).
+  var toggleMatch = expr.match(/\$\$toggle\(\s*'([^']+)'\s*\)/);
+  if (toggleMatch) {
+    e.preventDefault();
+    var sigName = toggleMatch[1];
+    var targets = document.querySelectorAll('[data-class-open="' + sigName + '"]');
+    for (var k = 0; k < targets.length; k++) {
+      targets[k].classList.toggle('open');
+    }
+    return;
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -301,6 +382,7 @@ window.dashboardFilter = function(value) {
 // ════════════════════════════════════════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', function() {
+  updateThemeButtons(document.documentElement.getAttribute('data-theme') || 'precision');
   setTimeout(function() { loadView('/dashboard/overview'); }, 50);
 });
 

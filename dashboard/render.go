@@ -158,10 +158,30 @@ func chartScript(fn string) string {
 // KPI CARD
 // ══════════════════════════════════════════════════════════════
 
-func kpiCard(id, label, value, subtext, accent string) string {
+// kpiIcon returns an inline stroke icon for a KPI card.
+func kpiIcon(name string) string {
+	switch name {
+	case "total":
+		return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.5"/></svg>`
+	case "cost":
+		return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`
+	case "sessions":
+		return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`
+	default: // tokens
+		return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`
+	}
+}
+
+// kpiCard renders a KPI stat card. accent is a CSS expression (e.g.
+// `var(--chart-consultation)`) applied as the card's --card-accent token so
+// the icon tint and top hairline follow the active theme.
+func kpiCard(id, label, value, subtext, icon, accent string) string {
 	var b strings.Builder
-	b.WriteString(`<div class="kpi-card" id="` + id + `" style="border-left-color:` + accent + `">`)
-	b.WriteString(`<div class="kpi-label">` + html.EscapeString(label) + `</div>`)
+	b.WriteString(`<div class="kpi-card" id="` + id + `" style="--card-accent:` + accent + `">`)
+	b.WriteString(`<div class="kpi-top">`)
+	b.WriteString(`<span class="kpi-icon">` + kpiIcon(icon) + `</span>`)
+	b.WriteString(`<span class="kpi-label">` + html.EscapeString(label) + `</span>`)
+	b.WriteString(`</div>`)
 	b.WriteString(`<div class="kpi-value">` + value + `</div>`)
 	if subtext != "" {
 		b.WriteString(`<div class="kpi-subtext">` + subtext + `</div>`)
@@ -194,37 +214,38 @@ func costChangeHTML(today, yesterday, changePct float64) string {
 	return `<span class="cost-change" style="color:` + color + `">` + arrow + ` ` + fmt.Sprintf("%.1f", abs) + `% <span class="cost-today">today ` + formatCost(today) + `</span></span>`
 }
 
- // Chart color palette and helpers
- var chartColors = []string{"#06b6d4", "#f59e0b", "#8b5cf6", "#10b981", "#f43f5e", "#14b8a6", "#ec4899", "#f97316"}
+// Chart color palette keys — resolved to CSS variables in dashboard.js so
+// every theme gets its own chart palette.
+var chartColors = []string{"chart-1", "chart-2", "chart-3", "chart-4", "chart-5", "chart-6", "chart-7", "chart-8"}
 
- // typeColors maps advice type to a specific color for consistency.
- func typeColor(t string) string {
- 	switch t {
- 	case "Consultations":
- 		return "#06b6d4"
- 	case "Expert Reviews", "expert_review":
- 		return "#f59e0b"
- 	case "Deliberations", "deliberation":
- 		return "#8b5cf6"
- 	default:
- 		return "#94a3b8"
- 	}
- }
- 
- func latencyLabels(series []db.DayLatency) []string {
- 	l := make([]string, len(series))
- 	for i, d := range series {
- 		l[i] = dayLabel(d.Date)
- 	}
- 	return l
- }
- 
- func latencyValues(series []db.DayLatency) []float64 {
- 	v := make([]float64, len(series))
- 	for i, d := range series {
- 		v[i] = d.AvgDurationMs
- 	}
- 	return v
+// typeColor maps an advice type to a semantic chart-palette key.
+func typeColor(t string) string {
+	switch t {
+	case "Consultations", "consultation":
+		return "chart-consultation"
+	case "Expert Reviews", "expert_review":
+		return "chart-expert"
+	case "Deliberations", "deliberation":
+		return "chart-deliberation"
+	default:
+		return "chart-other"
+	}
+}
+
+func latencyLabels(series []db.DayLatency) []string {
+	l := make([]string, len(series))
+	for i, d := range series {
+		l[i] = dayLabel(d.Date)
+	}
+	return l
+}
+
+func latencyValues(series []db.DayLatency) []float64 {
+	v := make([]float64, len(series))
+	for i, d := range series {
+		v[i] = d.AvgDurationMs
+	}
+	return v
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -236,12 +257,12 @@ func renderOverviewContent(m *db.OverviewMetrics) string {
 
 	// KPI grid
 	b.WriteString(`<div class="kpi-grid">`)
-	b.WriteString(kpiCard("kpi-total", "Total Advice", formatNumber(m.TotalAdvice), "", "#06b6d4"))
+	b.WriteString(kpiCard("kpi-total", "Total Advice", formatNumber(m.TotalAdvice), "", "total", "var(--chart-consultation)"))
 	b.WriteString(kpiCard("kpi-cost", "Total Cost", formatCost(m.TotalCost),
-		fmt.Sprintf("$%.4f avg/call", m.AvgCostPerCall), "#f59e0b"))
+		fmt.Sprintf("$%.4f avg/call", m.AvgCostPerCall), "cost", "var(--chart-expert)"))
 	b.WriteString(kpiCard("kpi-sessions", "Active Sessions", formatNumber(m.ActiveSessions),
-		"last hour", "#10b981"))
-	b.WriteString(kpiCard("kpi-tokens", "Total Tokens", formatNumber(m.TotalTokens), "", "#8b5cf6"))
+		"last hour", "sessions", "var(--green)"))
+	b.WriteString(kpiCard("kpi-tokens", "Total Tokens", formatNumber(m.TotalTokens), "", "tokens", "var(--purple)"))
 	b.WriteString(`</div>`)
 
 	// Cost sparkline card
@@ -554,7 +575,7 @@ func renderCostsContent(modelCosts []db.ModelCost, typeCosts []db.TypeCost, over
 	b.WriteString(chartScript(`FraoDashboard.line('cost-day',` + string(dayLabJSON) + `,` + string(dayValJSON) + `,'Cost');` +
 		`FraoDashboard.pie('cost-model',` + string(mlJSON) + `,` + string(mvJSON) + `);` +
 		`FraoDashboard.bar('cost-type',` + string(tlJSON) + `,` + string(tvJSON) + `,'Cost',` + string(tcJSON) + `);` +
-		`FraoDashboard.gauge('cost-gauge',` + fmt.Sprintf("%.6f", overview.TotalCost) + `,`+fmt.Sprintf("%.6f", budgetMax)+`,'Total Cost');`))
+		`FraoDashboard.gauge('cost-gauge',` + fmt.Sprintf("%.6f", overview.TotalCost) + `,` + fmt.Sprintf("%.6f", budgetMax) + `,'Total Cost');`))
 
 	return b.String()
 }
@@ -564,7 +585,7 @@ func renderCostsContent(modelCosts []db.ModelCost, typeCosts []db.TypeCost, over
 // ══════════════════════════════════════════════════════════════
 
 func renderMetricsContent(cells []db.HeatmapCell, m *db.OverviewMetrics, latency []db.DayLatency) string {
- 	var b strings.Builder
+	var b strings.Builder
 
 	if m.TotalAdvice == 0 {
 		return emptyState("No usage data recorded yet.")
@@ -602,13 +623,13 @@ func renderMetricsContent(cells []db.HeatmapCell, m *db.OverviewMetrics, latency
 		b.WriteString(`<tr><td class="heatmap-label">` + dayNames[dayIdx] + `</td>`)
 		for hourIdx, count := range row {
 			intensity := float64(count) / float64(maxVal)
-			alpha := 0.05 + intensity*0.85
+			pct := int(8 + intensity*84)
 			if count == 0 {
-				alpha = 0.02
+				pct = 2
 			}
 			title := fmt.Sprintf("%s %02d:00 — %d calls", dayNames[dayIdx], hourIdx, count)
 			b.WriteString(`<td title="` + html.EscapeString(title) + `">`)
-			b.WriteString(`<span class="heatmap-cell" style="background:rgba(6,182,212,` + fmt.Sprintf("%.2f", alpha) + `)">`)
+			b.WriteString(`<span class="heatmap-cell" style="background:color-mix(in srgb, var(--accent) ` + fmt.Sprintf("%d", pct) + `%, var(--surface))">`)
 			if count > 0 {
 				b.WriteString(fmt.Sprintf("%d", count))
 			}
