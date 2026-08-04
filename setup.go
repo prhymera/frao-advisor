@@ -47,9 +47,10 @@ expert reviews or second opinions required unless explicitly requested by the us
 `
 
 // Setup installs the advisor toggle commands and prints MCP configuration.
-//   projectDir: absolute path to the project root (e.g. frao-technologies/)
-//   binPath:    absolute path to the frao-advisor binary
-//   global:     when true, install to ~/.claude/commands/ instead of projectDir/.claude/commands/
+//
+//	projectDir: absolute path to the project root (e.g. frao-technologies/)
+//	binPath:    absolute path to the frao-advisor binary
+//	global:     when true, install to ~/.claude/commands/ instead of projectDir/.claude/commands/
 func runSetup(projectDir, binPath string, global bool) {
 	fmt.Println("⚙️  Frao Advisor Setup")
 	fmt.Println(strings.Repeat("─", 60))
@@ -103,6 +104,8 @@ func runSetup(projectDir, binPath string, global bool) {
 	fmt.Printf("\n  claude mcp add frao-advisor -- %s\n", binPath)
 	fmt.Println()
 	fmt.Println(strings.Repeat("─", 60))
+	fmt.Println(" Run the standalone dashboard (aggregates usage across sessions):")
+	fmt.Printf("   %s dashboard\n", binPath)
 	fmt.Println(" Add this section to your project CLAUDE.md for the protocol to work:")
 	fmt.Println()
 	fmt.Println("  ## \U0001f9e0 ADVISOR PROTOCOL (Opt-Out)")

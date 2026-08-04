@@ -1,0 +1,39 @@
+name: frao-advisor
+
+services:
+  # Single dashboard instance. The container name + `restart: unless-stopped`
+  # guarantee exactly one dashboard is serving at any time; MCP processes
+  # (running on the host) publish to http://10.64.0.5:9753.
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Match the host user's UID so the bind-mounted ./data dir (which owns
+        # advisor.db) is writable by the container's non-root user.
+        APP_UID: 1337
+    image: frao-advisor:dashboard
+    container_name: frao-advisor-dashboard
+    restart: unless-stopped
+    command: ["dashboard"]
+    ports:
+      - "10.64.0.5:9753:9753"
+    environment:
+      ADVISOR_DB_PATH: /data/advisor.db
+      # Bind inside the container; host exposure is pinned to 10.64.0.5:9753 above.
+      ADVISOR_DASHBOARD_HOST: "0.0.0.0"
+      ADVISOR_DASHBOARD_PORT: "9753"
+    volumes:
+      # SQLite DB + WAL live on the host so data survives container recreates.
+      # Seed with existing history: make docker-seed-dashboard
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9753/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256M

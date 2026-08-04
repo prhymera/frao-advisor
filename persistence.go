@@ -8,6 +8,7 @@ import (
 
 	"github.com/prhymera/frao-advisor/cost"
 	"github.com/prhymera/frao-advisor/db"
+	"github.com/prhymera/frao-advisor/publish"
 )
 
 // Background context for database operations.
@@ -16,7 +17,9 @@ var ctx = context.Background()
 // Persistence bridges MCP tool handlers to the database.
 // If the database is unavailable, all methods are safe no-ops.
 type Persistence struct {
-	database *db.DB
+	database     *db.DB
+	publisher    *publish.Publisher
+	sessionLabel string
 }
 
 // CaptureConsult persists a frao-consult result.
@@ -26,8 +29,9 @@ func (p *Persistence) CaptureConsult(sessionID string, question string, result *
 	}
 	inputCost, outputCost, _ := cost.CalculateCost(result.Model, result.PromptTokens, result.CompletionTokens, false)
 
+	id := uuidV4()
 	err := p.database.InsertConsultation(ctx, db.InsertConsultationParams{
-		ID:               uuidV4(),
+		ID:               id,
 		SessionID:        sessionID,
 		Question:         question,
 		Response:         result.Text,
@@ -45,6 +49,25 @@ func (p *Persistence) CaptureConsult(sessionID string, question string, result *
 	if err != nil {
 		log.Printf("persist consultation: %v", err)
 	}
+
+	p.publisher.Publish(db.Event{
+		ID:               id,
+		Type:             "consultation",
+		SessionID:        sessionID,
+		SessionLabel:     p.sessionLabel,
+		Question:         question,
+		Response:         result.Text,
+		Model:            result.Model,
+		ReasoningEffort:  "high",
+		PromptTokens:     result.PromptTokens,
+		CompletionTokens: result.CompletionTokens,
+		InputCost:        inputCost,
+		OutputCost:       outputCost,
+		InputPriceUsed:   cost.DefaultPrices[result.Model].InputPricePerM,
+		OutputPriceUsed:  cost.DefaultPrices[result.Model].OutputPricePerM,
+		CacheHit:         false,
+		DurationMs:       result.DurationMs,
+	})
 }
 
 // CaptureExpertReview persists a frao-expert-review result.
@@ -54,8 +77,9 @@ func (p *Persistence) CaptureExpertReview(sessionID, expertKey, context string, 
 	}
 	inputCost, outputCost, _ := cost.CalculateCost(result.Model, result.PromptTokens, result.CompletionTokens, false)
 
+	id := uuidV4()
 	err := p.database.InsertExpertReview(ctx, db.InsertExpertReviewParams{
-		ID:               uuidV4(),
+		ID:               id,
 		SessionID:        sessionID,
 		ExpertKey:        expertKey,
 		Context:          context,
@@ -74,6 +98,26 @@ func (p *Persistence) CaptureExpertReview(sessionID, expertKey, context string, 
 	if err != nil {
 		log.Printf("persist expert review: %v", err)
 	}
+
+	p.publisher.Publish(db.Event{
+		ID:               id,
+		Type:             "expert_review",
+		SessionID:        sessionID,
+		SessionLabel:     p.sessionLabel,
+		ExpertKey:        expertKey,
+		Context:          context,
+		Analysis:         result.Text,
+		Model:            result.Model,
+		ReasoningEffort:  "high",
+		PromptTokens:     result.PromptTokens,
+		CompletionTokens: result.CompletionTokens,
+		InputCost:        inputCost,
+		OutputCost:       outputCost,
+		InputPriceUsed:   cost.DefaultPrices[result.Model].InputPricePerM,
+		OutputPriceUsed:  cost.DefaultPrices[result.Model].OutputPricePerM,
+		CacheHit:         false,
+		DurationMs:       result.DurationMs,
+	})
 }
 
 // CaptureDeliberation persists a frao-multi-perspective result with contributions.
@@ -93,7 +137,10 @@ func (p *Persistence) CaptureDeliberation(sessionID, context, synthesis string, 
 	var totalInputCost, totalOutputCost float64
 	var totalDuration int64
 
-	// Persist each contribution
+	// Pass 1: sum contribution + synthesis usage and build contribution events.
+	// Contribution IDs are fixed here so the local insert and the published
+	// event reference the same records (idempotent ingest).
+	contributionEvents := make([]db.Contribution, 0, len(contributions))
 	for i, c := range contributions {
 		iCost, oCost, _ := cost.CalculateCost(c.Result.Model, c.Result.PromptTokens, c.Result.CompletionTokens, false)
 		totalPrompt += c.Result.PromptTokens
@@ -102,9 +149,8 @@ func (p *Persistence) CaptureDeliberation(sessionID, context, synthesis string, 
 		totalOutputCost += oCost
 		totalDuration += c.Result.DurationMs
 
-		err := p.database.InsertDeliberationContribution(ctx, db.InsertContributionParams{
+		contributionEvents = append(contributionEvents, db.Contribution{
 			ID:               uuidV4(),
-			DeliberationID:   deliberationID,
 			ExpertKey:        c.ExpertKey,
 			Analysis:         c.Result.Text,
 			PromptTokens:     c.Result.PromptTokens,
@@ -114,9 +160,6 @@ func (p *Persistence) CaptureDeliberation(sessionID, context, synthesis string, 
 			DurationMs:       c.Result.DurationMs,
 			SortOrder:        i,
 		})
-		if err != nil {
-			log.Printf("persist deliberation contribution: %v", err)
-		}
 	}
 
 	// Add synthesis cost
@@ -132,24 +175,63 @@ func (p *Persistence) CaptureDeliberation(sessionID, context, synthesis string, 
 		expertKeysJSON = expertKeysJSON[:len(expertKeysJSON)-1] + `, "` + expertKeys[i] + `"]`
 	}
 
+	// Deliberation row FIRST so contribution FK inserts resolve.
 	err := p.database.InsertDeliberation(ctx, db.InsertDeliberationParams{
-		ID:                  deliberationID,
-		SessionID:           sessionID,
-		Context:             context,
-		Synthesis:           synthesis,
-		ExpertCount:         len(expertKeys),
-		ExpertKeys:          expertKeysJSON,
-		Model:               synthesisResult.Model,
-		ReasoningEffort:     reasoningEffort,
-		TotalPromptTokens:   totalPrompt,
+		ID:                    deliberationID,
+		SessionID:             sessionID,
+		Context:               context,
+		Synthesis:             synthesis,
+		ExpertCount:           len(expertKeys),
+		ExpertKeys:            expertKeysJSON,
+		Model:                 synthesisResult.Model,
+		ReasoningEffort:       reasoningEffort,
+		TotalPromptTokens:     totalPrompt,
 		TotalCompletionTokens: totalCompletion,
-		TotalInputCost:      totalInputCost,
-		TotalOutputCost:     totalOutputCost,
-		DurationMs:          totalDuration,
+		TotalInputCost:        totalInputCost,
+		TotalOutputCost:       totalOutputCost,
+		DurationMs:            totalDuration,
 	})
 	if err != nil {
 		log.Printf("persist deliberation: %v", err)
 	}
+
+	// Pass 2: persist contributions (parent row now exists).
+	for i, ev := range contributionEvents {
+		err := p.database.InsertDeliberationContribution(ctx, db.InsertContributionParams{
+			ID:               ev.ID,
+			DeliberationID:   deliberationID,
+			ExpertKey:        ev.ExpertKey,
+			Analysis:         ev.Analysis,
+			PromptTokens:     ev.PromptTokens,
+			CompletionTokens: ev.CompletionTokens,
+			InputCost:        ev.InputCost,
+			OutputCost:       ev.OutputCost,
+			DurationMs:       ev.DurationMs,
+			SortOrder:        i,
+		})
+		if err != nil {
+			log.Printf("persist deliberation contribution: %v", err)
+		}
+	}
+
+	p.publisher.Publish(db.Event{
+		ID:                    deliberationID,
+		Type:                  "deliberation",
+		SessionID:             sessionID,
+		SessionLabel:          p.sessionLabel,
+		Context:               context,
+		Synthesis:             synthesis,
+		ExpertCount:           len(expertKeys),
+		ExpertKeys:            expertKeysJSON,
+		Model:                 synthesisResult.Model,
+		ReasoningEffort:       reasoningEffort,
+		TotalPromptTokens:     totalPrompt,
+		TotalCompletionTokens: totalCompletion,
+		TotalInputCost:        totalInputCost,
+		TotalOutputCost:       totalOutputCost,
+		DurationMs:            totalDuration,
+		Contributions:         contributionEvents,
+	})
 }
 
 // EnsureSession looks up or creates a session record.
@@ -174,4 +256,3 @@ func uuidV4() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
-

@@ -53,7 +53,7 @@ func (d *DB) InsertConsultation(ctx context.Context, p InsertConsultationParams)
 		cacheHit = 1
 	}
 	_, err := d.ExecContext(ctx, `
-		INSERT INTO consultations (id, session_id, question, response, model, reasoning_effort,
+		INSERT OR IGNORE INTO consultations (id, session_id, question, response, model, reasoning_effort,
 			prompt_tokens, completion_tokens, input_cost, output_cost,
 			input_price_used, output_price_used, cache_hit, duration_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -89,7 +89,7 @@ func (d *DB) InsertExpertReview(ctx context.Context, p InsertExpertReviewParams)
 		cacheHit = 1
 	}
 	_, err := d.ExecContext(ctx, `
-		INSERT INTO expert_reviews (id, session_id, expert_key, context, analysis, model, reasoning_effort,
+		INSERT OR IGNORE INTO expert_reviews (id, session_id, expert_key, context, analysis, model, reasoning_effort,
 			prompt_tokens, completion_tokens, input_cost, output_cost,
 			input_price_used, output_price_used, cache_hit, duration_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -119,7 +119,7 @@ type InsertDeliberationParams struct {
 
 func (d *DB) InsertDeliberation(ctx context.Context, p InsertDeliberationParams) error {
 	_, err := d.ExecContext(ctx, `
-		INSERT INTO deliberations (id, session_id, context, synthesis, expert_count, expert_keys,
+		INSERT OR IGNORE INTO deliberations (id, session_id, context, synthesis, expert_count, expert_keys,
 			model, reasoning_effort, total_prompt_tokens, total_completion_tokens,
 			total_input_cost, total_output_cost, duration_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -144,7 +144,7 @@ type InsertContributionParams struct {
 
 func (d *DB) InsertDeliberationContribution(ctx context.Context, p InsertContributionParams) error {
 	_, err := d.ExecContext(ctx, `
-		INSERT INTO deliberation_contributions (id, deliberation_id, expert_key, analysis,
+		INSERT OR IGNORE INTO deliberation_contributions (id, deliberation_id, expert_key, analysis,
 			prompt_tokens, completion_tokens, input_cost, output_cost, duration_ms, sort_order)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.DeliberationID, p.ExpertKey, p.Analysis,
@@ -406,6 +406,7 @@ type TimelineEntry struct {
 	Tokens    int     `json:"tokens"`
 	DurationMs int64  `json:"duration_ms"`
 	CreatedAt string  `json:"created_at"`
+	SessionLabel string `json:"session_label,omitempty"`
 }
 
 func (d *DB) Timeline(ctx context.Context, typeFilter, expertFilter string, limit, offset int) ([]TimelineEntry, int, error) {
@@ -429,21 +430,24 @@ func (d *DB) Timeline(ctx context.Context, typeFilter, expertFilter string, limi
 	dataParams := append(append(params, params...), params...)
 	dataParams = append(dataParams, limit, offset)
 	query := fmt.Sprintf(`
-		SELECT id, type, summary, expert, model, cost, tokens, duration_ms, created_at FROM (
-			SELECT id, 'consultation' AS type, substr(question, 1, 120) AS summary,
+		SELECT id, type, summary, expert, model, cost, tokens, duration_ms, created_at, session_label FROM (
+			SELECT c.id, 'consultation' AS type, substr(question, 1, 120) AS summary,
 				'' AS expert, model, input_cost + output_cost AS cost,
-				prompt_tokens + completion_tokens AS tokens, duration_ms, created_at
-			FROM consultations %s
+				prompt_tokens + completion_tokens AS tokens, duration_ms, created_at,
+				IFNULL(s.session_id, '') AS session_label
+			FROM consultations c LEFT JOIN sessions s ON s.id = c.session_id %s
 			UNION ALL
-			SELECT id, 'expert_review', substr(context, 1, 120),
+			SELECT er.id, 'expert_review', substr(context, 1, 120),
 				expert_key, model, input_cost + output_cost,
-				prompt_tokens + completion_tokens, duration_ms, created_at
-			FROM expert_reviews %s
+				prompt_tokens + completion_tokens, duration_ms, created_at,
+				IFNULL(s.session_id, '') AS session_label
+			FROM expert_reviews er LEFT JOIN sessions s ON s.id = er.session_id %s
 			UNION ALL
-			SELECT id, 'deliberation', substr(context, 1, 120),
+			SELECT d.id, 'deliberation', substr(context, 1, 120),
 				expert_keys, model, total_input_cost + total_output_cost,
-				total_prompt_tokens + total_completion_tokens, duration_ms, created_at
-			FROM deliberations %s
+				total_prompt_tokens + total_completion_tokens, duration_ms, created_at,
+				IFNULL(s.session_id, '') AS session_label
+			FROM deliberations d LEFT JOIN sessions s ON s.id = d.session_id %s
 		) ORDER BY created_at DESC LIMIT ? OFFSET ?`, where, where, where)
 
 	rows, err := d.QueryContext(ctx, query, dataParams...)
@@ -455,7 +459,7 @@ func (d *DB) Timeline(ctx context.Context, typeFilter, expertFilter string, limi
 	var entries []TimelineEntry
 	for rows.Next() {
 		var e TimelineEntry
-		if err := rows.Scan(&e.ID, &e.Type, &e.Summary, &e.ExpertKey, &e.Model, &e.Cost, &e.Tokens, &e.DurationMs, &e.CreatedAt); err == nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Summary, &e.ExpertKey, &e.Model, &e.Cost, &e.Tokens, &e.DurationMs, &e.CreatedAt, &e.SessionLabel); err == nil {
 			entries = append(entries, e)
 		}
 	}

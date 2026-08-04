@@ -314,6 +314,17 @@ html, body {
 
 .timeline-time { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 
+/* Session attribution tag (shown in timeline entries) */
+.session-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+  white-space: nowrap;
+}
+
 /* ─── Pagination ─── */
 .pagination {
   display: flex; align-items: center; justify-content: center;

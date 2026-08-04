@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"html/template"
@@ -236,8 +237,6 @@ func (h *Handlers) Metrics(w http.ResponseWriter, r *http.Request) {
 
 // ─── Error Content Helper ─────────────────────────────────────
 
-
-
 // ─── Detail ────────────────────────────────────────────────────
 
 func (h *Handlers) Detail(w http.ResponseWriter, r *http.Request) {
@@ -277,8 +276,6 @@ func (h *Handlers) Detail(w http.ResponseWriter, r *http.Request) {
 
 	sse.PatchElements(`<div id="content">` + html + `</div>`)
 }
-
-
 
 // ─── Detail Rendering Helpers ────────────────────────────────
 
@@ -354,4 +351,43 @@ func (h *Handlers) renderDeliberationDetail(ctx context.Context, id string) (str
 
 func errorContent(title, detail string) string {
 	return `<div id="content"><div class="empty-state"><div class="empty-icon">&#9888;</div><h2>` + title + `</h2><p class="empty-desc">` + detail + `</p><a href="#" onclick="location.reload()" class="retry-link">Reload</a></div></div>`
+}
+
+// ─── Ingest API ─────────────────────────────────────────────────
+
+// Health returns 200 when the dashboard and its database are up.
+func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
+	if h.DB != nil {
+		var one int
+		if err := h.DB.QueryRowContext(r.Context(), `SELECT 1`).Scan(&one); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// IngestEvent accepts an advice record published by an MCP process and
+// persists it. Idempotent by record ID (the inserts use INSERT OR IGNORE),
+// so retries and double-writes are harmless.
+func (h *Handlers) IngestEvent(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
+	defer r.Body.Close()
+
+	var ev db.Event
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := ev.Validate(); err != nil {
+		http.Error(w, "invalid event: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.DB.IngestEvent(r.Context(), ev); err != nil {
+		http.Error(w, "ingest failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`))
 }

@@ -3,8 +3,8 @@
 package dashboard
 
 import (
-	"encoding/csv"
 	"embed"
+	"encoding/csv"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -25,7 +25,9 @@ func getBindAddr() string {
 	if h := os.Getenv("ADVISOR_DASHBOARD_HOST"); h != "" {
 		return h
 	}
-	return "127.0.0.1" // security-by-default; override via ADVISOR_DASHBOARD_HOST
+	// Default bind is the host's WG interface so all sessions on the network
+	// can reach the dashboard. Override via ADVISOR_DASHBOARD_HOST.
+	return "10.64.0.5"
 }
 func Start(database *db.DB, port string) *http.Server {
 	layout := template.Must(template.ParseFS(contentFS, "templates/layout.gohtml"))
@@ -58,6 +60,10 @@ func Start(database *db.DB, port string) *http.Server {
 	mux.HandleFunc("GET /dashboard/detail", h.Detail)
 	// CSV export
 	mux.HandleFunc("GET /export/csv", h.CSVExport)
+
+	// Ingest API — MCP processes publish advice records here (best-effort).
+	mux.HandleFunc("POST /api/events", h.IngestEvent)
+	mux.HandleFunc("GET /api/health", h.Health)
 
 	srv := &http.Server{
 		Addr:    getBindAddr() + ":" + port,
@@ -96,7 +102,7 @@ func (h *Handlers) CSVExport(w http.ResponseWriter, r *http.Request) {
 	defer wr.Flush()
 
 	// Header row
-	wr.Write([]string{"Date", "Type", "Expert", "Model", "Tokens", "Cost", "Duration (ms)"})
+	wr.Write([]string{"Date", "Type", "Expert", "Model", "Tokens", "Cost", "Duration (ms)", "Session"})
 
 	for _, e := range entries {
 		wr.Write([]string{
@@ -107,6 +113,7 @@ func (h *Handlers) CSVExport(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("%d", e.Tokens),
 			fmt.Sprintf("%.6f", e.Cost),
 			fmt.Sprintf("%d", e.DurationMs),
+			sanitizeCSVField(e.SessionLabel),
 		})
 	}
 }

@@ -17,7 +17,9 @@
 //   ADVISOR_MODEL               — model name (default: deepseek-v4-pro)
 //   ADVISOR_API_BASE            — API base URL (default: https://api.deepseek.com/v1)
 //   ADVISOR_DASHBOARD_PORT      — dashboard port (default: 9753)
-//   ADVISOR_DASHBOARD_DISABLE   — set to "1" to disable the dashboard
+//   ADVISOR_DASHBOARD_URL       — dashboard endpoint for MCP publish (default: http://10.64.0.5:9753)
+//   ADVISOR_SESSION_LABEL       — per-process session label (default: <workdir>-<pid>)
+//   ADVISOR_DASHBOARD_DISABLE   — set to "1" to disable the embedded dashboard
 
 package main
 
@@ -28,17 +30,20 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/prhymera/frao-advisor/dashboard"
 	"github.com/prhymera/frao-advisor/db"
+	"github.com/prhymera/frao-advisor/publish"
 )
 
 // Package-level state for handlers
 var (
-	persister   *Persistence
+	persister        *Persistence
 	currentSessionID string
 )
+
 func main() {
 	log.SetPrefix("[frao-advisor] ")
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
@@ -59,6 +64,9 @@ func main() {
 			}
 			binPath, _ := os.Executable()
 			runSetup(projectDir, binPath, global)
+			return
+		case "dashboard":
+			runDashboard()
 			return
 		case "help", "--help", "-h":
 			printUsage()
@@ -87,14 +95,39 @@ func main() {
 	if err != nil {
 		log.Printf("WARNING: database unavailable (%v) — persistence disabled", err)
 	} else {
-		persister = &Persistence{database: database}
-		defer database.Close()
 		log.Printf("persistence active — %s", dbPath)
 	}
-	currentSessionID = persister.EnsureSession("mcp-server-start")
 
-	// Start optional web dashboard
-	if database != nil && getEnv("ADVISOR_DASHBOARD_DISABLE", "") != "1" {
+	// Best-effort publishing to the standalone dashboard. Publishing never
+	// blocks or fails the MCP tool path: if the dashboard is down, events are
+	// logged and dropped. Set ADVISOR_DASHBOARD_URL="" to disable.
+	dashURL := dashboardURL()
+	publisher := publish.New(dashURL)
+	if publisher == nil {
+		log.Print("dashboard publishing disabled")
+	} else {
+		defer publisher.Flush()
+		log.Printf("publishing advice to dashboard: %s", dashURL)
+	}
+
+	// Session label: human-readable, overridable, so the dashboard can
+	// attribute usage across the different Claude sessions.
+	sessionLabel := getEnv("ADVISOR_SESSION_LABEL", "")
+	if sessionLabel == "" {
+		sessionLabel = filepath.Base(workDir()) + "-" + strconv.Itoa(os.Getpid())
+	}
+
+	if database != nil {
+		persister = &Persistence{database: database, publisher: publisher, sessionLabel: sessionLabel}
+		defer database.Close()
+	}
+	currentSessionID = persister.EnsureSession(sessionLabel)
+
+	// Embedded dashboard: off by default in MCP mode. ADVISOR_DASHBOARD_EMBED=1
+	// restores the old single-process behavior for dev; ADVISOR_DASHBOARD_DISABLE=1
+	// still forces it off. Run the standalone dashboard via `frao-advisor dashboard`.
+	if database != nil && getEnv("ADVISOR_DASHBOARD_DISABLE", "") != "1" &&
+		(getEnv("ADVISOR_MCP_DISABLE", "") == "1" || getEnv("ADVISOR_DASHBOARD_EMBED", "") == "1") {
 		port := getEnv("ADVISOR_DASHBOARD_PORT", "9753")
 		dashSrv := dashboard.Start(database, port)
 		defer dashSrv.Close()
@@ -159,6 +192,34 @@ func getEnv(key, fallback string) string {
 	}
 	return fallback
 }
+
+// runDashboard starts the standalone dashboard service. It does not require a
+// DeepSeek API key and blocks forever serving the UI + ingest API.
+func runDashboard() {
+	dbPath := getEnv("ADVISOR_DB_PATH", filepath.Join(workDir(), "advisor.db"))
+	database, err := db.Open(dbPath)
+	if err != nil {
+		log.Fatalf("dashboard: database unavailable: %v", err)
+	}
+	defer database.Close()
+	log.Printf("dashboard persistence — %s", dbPath)
+
+	port := getEnv("ADVISOR_DASHBOARD_PORT", "9753")
+	dashSrv := dashboard.Start(database, port)
+	log.Printf("dashboard serving on http://%s", dashSrv.Addr)
+	select {}
+}
+
+// dashboardURL returns the dashboard endpoint MCP processes publish to.
+// An explicitly-empty ADVISOR_DASHBOARD_URL disables publishing; when unset,
+// the default host 10.64.0.5 is used.
+func dashboardURL() string {
+	if v, ok := os.LookupEnv("ADVISOR_DASHBOARD_URL"); ok {
+		return v
+	}
+	return "http://10.64.0.5:9753"
+}
+
 // writeResponse sends a JSON-RPC response to stdout.
 func writeResponse(id any, result any) {
 	resp := Response{
@@ -313,21 +374,31 @@ func printUsage() {
 
 Usage:
   frao-advisor                  Run as MCP server (stdin/stdout JSON-RPC)
+  frao-advisor dashboard            Run the standalone dashboard service
   frao-advisor setup [dir]           Install slash commands in project .claude/commands
   frao-advisor setup --global       Install slash commands in ~/.claude/commands (recommended)
   frao-advisor help             Show this help
+
+Dashboard:
+  The dashboard is a separate process. MCP processes publish advice records
+  to it over HTTP (best-effort; never blocks the tool call).
+    frao-advisor dashboard      # serves http://10.64.0.5:9753
 
 Setup:
   Run from your project root to install /advisor-on and /advisor-off commands:
     frao-advisor setup .
 
 Environment:
-  DEEPSEEK_API_KEY              DeepSeek API key (required)
+  DEEPSEEK_API_KEY              DeepSeek API key (required for MCP mode)
   ADVISOR_MODEL                 Model name (default: deepseek-v4-pro)
   ADVISOR_API_BASE              API base URL (default: https://api.deepseek.com/v1)
   ADVISOR_DB_PATH               SQLite database path (default: ./advisor.db)
   ADVISOR_DASHBOARD_PORT        Dashboard HTTP port (default: 9753)
-  ADVISOR_DASHBOARD_DISABLE     Set to "1" to disable the dashboard`)
+  ADVISOR_DASHBOARD_HOST        Dashboard bind host (default: 10.64.0.5)
+  ADVISOR_DASHBOARD_URL         Dashboard endpoint for MCP publish (default: http://10.64.0.5:9753; empty disables)
+  ADVISOR_DASHBOARD_EMBED       Set to "1" to embed the dashboard in MCP mode (dev only)
+  ADVISOR_DASHBOARD_DISABLE     Set to "1" to disable the dashboard (compat)
+  ADVISOR_SESSION_LABEL         Human-readable session label (default: <workdir>-<pid>)`)
 }
 
 // ─── Tool Call ─────────────────────────────────────────────────────────
@@ -425,6 +496,7 @@ func handleConsult(args map[string]any, client *DeepSeekClient, progressToken an
 		float64(result.PromptTokens+result.CompletionTokens)/1_000_000*0.435, result.DurationMs)
 	return textResult(result.Text)
 }
+
 // ─── Tool: frao-expert-review ─────────────────────────────────────────
 
 func handleExpertReview(args map[string]any, client *DeepSeekClient, progressToken any) ToolCallResult {
@@ -524,13 +596,12 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 
 	synthesisInput := fmt.Sprintf("Synthesize the following expert perspectives into a unified recommendation.\n\nIdentify:\n  1. Areas of agreement\n  2. Areas of disagreement\n  3. Critical findings\n  4. Final recommendation\n\n%s", strings.Join(parts, "\n\n"))
 
-		synthesisResult, err := client.ChatWithUsage(synthesisSystemPrompt, synthesisInput, 0.2, 4096)
-		if err != nil {
-			log.Printf("synthesis error: %v", err)
-			synthesisResult = &ChatResult{Text: fmt.Sprintf("[Synthesis failed: %v]", err), Model: client.model}
-		}
-		synthesis := synthesisResult.Text
-
+	synthesisResult, err := client.ChatWithUsage(synthesisSystemPrompt, synthesisInput, 0.2, 4096)
+	if err != nil {
+		log.Printf("synthesis error: %v", err)
+		synthesisResult = &ChatResult{Text: fmt.Sprintf("[Synthesis failed: %v]", err), Model: client.model}
+	}
+	synthesis := synthesisResult.Text
 
 	sendProgress(progressToken, total, total, "Multi-perspective analysis complete")
 	log.Print("multi-perspective — complete")
@@ -550,15 +621,15 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 	out.WriteString(synthesis)
 
 	// Persist the deliberation
-		if persister != nil {
-			var cons []ContributionResult
-			for _, c := range contributions {
-				cons = append(cons, ContributionResult{ExpertKey: c.Key, Result: c.Result})
-			}
-			persister.CaptureDeliberation(currentSessionID, context, synthesis, selectedExperts, effort, cons, synthesisResult)
+	if persister != nil {
+		var cons []ContributionResult
+		for _, c := range contributions {
+			cons = append(cons, ContributionResult{ExpertKey: c.Key, Result: c.Result})
 		}
+		persister.CaptureDeliberation(currentSessionID, context, synthesis, selectedExperts, effort, cons, synthesisResult)
+	}
 
-		return textResult(out.String())
+	return textResult(out.String())
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ type DB struct {
 // Open opens (or creates) the SQLite database at the given path and
 // runs schema migrations. Uses WAL mode for concurrent read performance.
 func Open(path string) (*DB, error) {
-	conn, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_txlock=immediate")
+	conn, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}

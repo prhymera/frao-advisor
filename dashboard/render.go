@@ -322,6 +322,9 @@ func renderTimelineContent(entries []db.TimelineEntry, total, limit, offset int,
 		if e.ExpertKey != "" {
 			b.WriteString(`<span>` + html.EscapeString(e.ExpertKey) + `</span>`)
 		}
+		if e.SessionLabel != "" {
+			b.WriteString(`<span class="session-tag">` + html.EscapeString(e.SessionLabel) + `</span>`)
+		}
 		b.WriteString(`</div>`)
 		b.WriteString(`</div>`)
 		b.WriteString(`<span class="timeline-time">` + friendlyTime(e.CreatedAt) + `</span>`)

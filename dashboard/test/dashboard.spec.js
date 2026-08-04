@@ -329,7 +329,7 @@ test.describe('CSV Export', () => {
     const body = await response.text();
     const lines = body.trim().split('\n');
     expect(lines.length).toBeGreaterThan(1); // Header + at least 1 data row
-    expect(lines[0]).toBe('Date,Type,Expert,Model,Tokens,Cost,Duration (ms)');
+    expect(lines[0]).toBe('Date,Type,Expert,Model,Tokens,Cost,Duration (ms),Session');
     console.log(`  ✅ CSV rows: ${lines.length - 1} data rows`);
     console.log(`  ✅ CSV header: ${lines[0]}`);
   });

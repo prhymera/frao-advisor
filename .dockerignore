@@ -1,0 +1,12 @@
+.git
+.claude
+node_modules
+dashboard/test
+test-results
+dist
+data
+*.db
+*.db-wal
+*.db-shm
+frao-advisor
+*.test
