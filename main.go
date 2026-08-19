@@ -20,6 +20,9 @@
 //   ADVISOR_DASHBOARD_URL       — dashboard endpoint for MCP publish (default: http://10.64.0.5:9753)
 //   ADVISOR_SESSION_LABEL       — per-process session label (default: <workdir>-<pid>)
 //   ADVISOR_DASHBOARD_DISABLE   — set to "1" to disable the embedded dashboard
+//   ADVISOR_TIMEOUT_SECONDS     — per-DeepSeek-call timeout (default: 300)
+//   ADVISOR_DEFAULT_EFFORT      — default reasoning_effort when unset (default: medium)
+//   ADVISOR_SERIALIZE           — "0" disables cross-process call serialization
 
 package main
 
@@ -296,7 +299,7 @@ var tools = []Tool{
 					Type:        "string",
 					Description: "How deeply to reason. high/xhigh yields better quality but takes longer",
 					Enum:        []string{"low", "medium", "high", "xhigh"},
-					Default:     "high",
+					Default:     defaultEffort(),
 				},
 			},
 			Required: []string{"question"},
@@ -322,7 +325,7 @@ var tools = []Tool{
 					Type:        "string",
 					Description: "How deeply to reason",
 					Enum:        []string{"low", "medium", "high", "xhigh"},
-					Default:     "high",
+					Default:     defaultEffort(),
 				},
 			},
 			Required: []string{"expert", "context"},
@@ -354,7 +357,7 @@ var tools = []Tool{
 					Type:        "string",
 					Description: "How deeply to reason",
 					Enum:        []string{"low", "medium", "high", "xhigh"},
-					Default:     "high",
+					Default:     defaultEffort(),
 				},
 			},
 			Required: []string{"context"},
@@ -398,7 +401,10 @@ Environment:
   ADVISOR_DASHBOARD_URL         Dashboard endpoint for MCP publish (default: http://10.64.0.5:9753; empty disables)
   ADVISOR_DASHBOARD_EMBED       Set to "1" to embed the dashboard in MCP mode (dev only)
   ADVISOR_DASHBOARD_DISABLE     Set to "1" to disable the dashboard (compat)
-  ADVISOR_SESSION_LABEL         Human-readable session label (default: <workdir>-<pid>)`)
+  ADVISOR_SESSION_LABEL         Human-readable session label (default: <workdir>-<pid>)
+  ADVISOR_TIMEOUT_SECONDS      Per-DeepSeek-call timeout (default: 300)
+  ADVISOR_DEFAULT_EFFORT       Default reasoning_effort when unset (default: medium)
+  ADVISOR_SERIALIZE            "0" disables cross-process call serialization`)
 }
 
 // ─── Tool Call ─────────────────────────────────────────────────────────
@@ -478,12 +484,12 @@ func handleConsult(args map[string]any, client *DeepSeekClient, progressToken an
 		return errorResult("'question' is required")
 	}
 
-	effort := getArg(args, "reasoning_effort", "high")
+	effort := getArg(args, "reasoning_effort", defaultEffort())
 	log.Printf("consult — effort=%s", effort)
 	sendProgress(progressToken, 0.1, 1, "Consulting deepseek-v4-pro...")
 
 	system := fmt.Sprintf(advisorSystemPreamble, effort)
-	result, err := client.ChatWithUsage(system, question, 0.1, 8192)
+	result, err := client.ChatWithEffort(system, question, 0.1, effort)
 	if err != nil {
 		log.Printf("consult error: %v", err)
 		return errorResult(fmt.Sprintf("Consult failed: %v", err))
@@ -515,12 +521,12 @@ func handleExpertReview(args map[string]any, client *DeepSeekClient, progressTok
 		return errorResult(fmt.Sprintf("Unknown expert '%s'. Available: %s", expertKey, strings.Join(expertKeys, ", ")))
 	}
 
-	effort := getArg(args, "reasoning_effort", "high")
+	effort := getArg(args, "reasoning_effort", defaultEffort())
 	log.Printf("expert-review — %s, effort=%s", expertKey, effort)
 	sendProgress(progressToken, 0.1, 1, fmt.Sprintf("Consulting %s...", expert.Name))
 
 	system := fmt.Sprintf("%s\n\nReasoning effort: %s\nProvide structured analysis with severity ratings and concrete recommendations.", expert.SystemPrompt, effort)
-	result, err := client.ChatWithUsage(system, context, 0.15, 8192)
+	result, err := client.ChatWithEffort(system, context, 0.15, effort)
 	if err != nil {
 		log.Printf("expert-review %s error: %v", expertKey, err)
 		return errorResult(fmt.Sprintf("Review failed: %v", err))
@@ -557,7 +563,7 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 		selectedExperts = []string{"architect", "code-reviewer", "security-analyst"}
 	}
 
-	effort := getArg(args, "reasoning_effort", "high")
+	effort := getArg(args, "reasoning_effort", defaultEffort())
 	total := float64(len(selectedExperts) + 1) // experts + synthesis
 	log.Printf("multi-perspective — %d experts: %s, effort=%s", len(selectedExperts), strings.Join(selectedExperts, ", "), effort)
 
@@ -576,7 +582,7 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 		system := fmt.Sprintf("%s\n\nReasoning effort: %s\nYou are one of %d experts reviewing this. Focus solely on your domain. Do not defer to or repeat other perspectives.",
 			expert.SystemPrompt, effort, len(selectedExperts))
 
-		result, err := client.ChatWithUsage(system, context, 0.15, 8192)
+		result, err := client.ChatWithEffort(system, context, 0.15, effort)
 		if err != nil {
 			log.Printf("multi-perspective %s error: %v", key, err)
 			result = &ChatResult{Text: fmt.Sprintf("[Error consulting %s: %v]", expert.Name, err), Model: client.model}
@@ -596,7 +602,7 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 
 	synthesisInput := fmt.Sprintf("Synthesize the following expert perspectives into a unified recommendation.\n\nIdentify:\n  1. Areas of agreement\n  2. Areas of disagreement\n  3. Critical findings\n  4. Final recommendation\n\n%s", strings.Join(parts, "\n\n"))
 
-	synthesisResult, err := client.ChatWithUsage(synthesisSystemPrompt, synthesisInput, 0.2, 4096)
+	synthesisResult, err := client.ChatWithEffort(synthesisSystemPrompt, synthesisInput, 0.2, effort)
 	if err != nil {
 		log.Printf("synthesis error: %v", err)
 		synthesisResult = &ChatResult{Text: fmt.Sprintf("[Synthesis failed: %v]", err), Model: client.model}
@@ -656,4 +662,14 @@ func getArg(args map[string]any, key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+func defaultEffort() string {
+	// Default reasoning effort for calls that don't specify one. "medium" is
+	// a genuine middle tier (see effortConfig) that stays well under the
+	// client timeout while keeping enough reasoning budget for real analysis.
+	// ADVISOR_DEFAULT_EFFORT overrides it.
+	if v := os.Getenv("ADVISOR_DEFAULT_EFFORT"); v != "" {
+		return v
+	}
+	return "medium"
 }

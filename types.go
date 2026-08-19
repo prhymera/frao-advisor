@@ -63,7 +63,7 @@ type PropertySchema struct {
 	Enum        []string `json:"enum,omitempty"`
 	Default     any      `json:"default,omitempty"`
 	Items       *struct {
-		Type string `json:"type"`
+		Type string   `json:"type"`
 		Enum []string `json:"enum,omitempty"`
 	} `json:"items,omitempty"`
 }
@@ -97,18 +97,24 @@ type ChatMessage struct {
 	Content string `json:"content"`
 }
 
+type ThinkingConfig struct {
+	Type string `json:"type,omitempty"`
+}
+
 type ChatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	Temperature float64       `json:"temperature,omitempty"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []ChatMessage   `json:"messages"`
+	Temperature     float64         `json:"temperature,omitempty"`
+	MaxTokens       int             `json:"max_tokens,omitempty"`
+	Thinking        *ThinkingConfig `json:"thinking,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 }
 
 // Usage holds token counts returned by the DeepSeek API.
 type Usage struct {
-	PromptTokens       int `json:"prompt_tokens"`
-	CompletionTokens   int `json:"completion_tokens"`
-	TotalTokens        int `json:"total_tokens"`
+	PromptTokens          int `json:"prompt_tokens"`
+	CompletionTokens      int `json:"completion_tokens"`
+	TotalTokens           int `json:"total_tokens"`
 	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
 }
@@ -127,21 +133,23 @@ type ChatResponse struct {
 
 // ChatResult holds the full DeepSeek API response plus usage metadata.
 type ChatResult struct {
-	Text               string
-	PromptTokens       int
-	CompletionTokens   int
-	TotalTokens        int
+	Text                  string
+	FinishReason          string
+	FellBack              bool
+	PromptTokens          int
+	CompletionTokens      int
+	TotalTokens           int
 	PromptCacheHitTokens  int
 	PromptCacheMissTokens int
-	Model              string
-	DurationMs         int64
-	Temperature        float64
-	MaxTokens          int
+	Model                 string
+	DurationMs            int64
+	Temperature           float64
+	MaxTokens             int
 }
 
 // Expert persona
 type Expert struct {
-	Name        string
+	Name         string
 	SystemPrompt string
 }
 
