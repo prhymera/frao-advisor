@@ -234,6 +234,31 @@ func (p *Persistence) CaptureDeliberation(sessionID, context, synthesis string, 
 	})
 }
 
+// CaptureError persists a failed tool call so missed calls are countable.
+// Consult and expert-review failures previously returned to the caller with no
+// durable record; multi-perspective only leaked partial failures into
+// contribution text. This is the audit trail.
+func (p *Persistence) CaptureError(tool, stage, effort, errMsg, contextSnip string) {
+	if p == nil || p.database == nil {
+		return
+	}
+	if len(contextSnip) > 200 {
+		contextSnip = contextSnip[:200]
+	}
+	err := p.database.InsertError(ctx, db.InsertErrorParams{
+		ID:          uuidV4(),
+		SessionID:   currentSessionID,
+		Tool:        tool,
+		Stage:       stage,
+		Effort:      effort,
+		Error:       errMsg,
+		ContextSnip: contextSnip,
+	})
+	if err != nil {
+		log.Printf("persist error: %v", err)
+	}
+}
+
 // EnsureSession looks up or creates a session record.
 func (p *Persistence) EnsureSession(sessionID string) string {
 	if p == nil || p.database == nil {

@@ -7,17 +7,19 @@ import (
 	"time"
 )
 
-// withDeepSeekLock serializes upstream DeepSeek calls across all frao-advisor
-// processes. Every session shares one API key, and concurrent high-effort
-// thinking calls trigger upstream throttling (2-3 minute responses that trip
-// the client timeout). A single global lock keeps at most one call in flight,
-// which keeps responses fast and inside the timeout.
+// withDeepSeekLock optionally serializes upstream DeepSeek calls across all
+// frao-advisor processes. Serialization is OFF by default: call volume here is
+// low, so concurrent sessions just run in parallel, and bounded retry in
+// doChat absorbs the occasional upstream throttle. The lock remains available
+// via ADVISOR_SERIALIZE=1 for pathological fan-out (many sessions hammering
+// one key simultaneously), where at-most-one-in-flight keeps responses inside
+// the client timeout.
 //
 // The lock is an optimization, never a correctness gate: if the lock file
-// can't be created, the wait times out, or ADVISOR_SERIALIZE=0 is set, calls
-// proceed unlocked rather than failing.
+// can't be created or the wait times out, calls proceed unlocked rather than
+// failing.
 func withDeepSeekLock(fn func() error) error {
-	if getEnv("ADVISOR_SERIALIZE", "1") == "0" {
+	if getEnv("ADVISOR_SERIALIZE", "0") == "0" {
 		return fn()
 	}
 

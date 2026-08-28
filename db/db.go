@@ -166,6 +166,21 @@ var schemaStatements = []string{
 		expert_reviews_cost REAL DEFAULT 0,
 		deliberations_cost  REAL DEFAULT 0
 	)`,
+	// Advisor error log — every failed tool call, so missed calls are countable.
+	// Consult/expert-review failures previously returned to the caller with no
+	// durable record; only multi-perspective partial failures leaked into
+	// contribution text. This is the audit trail that answers "how many missed calls".
+	`CREATE TABLE IF NOT EXISTS advisor_errors (
+		id           TEXT PRIMARY KEY,
+		session_id   TEXT NOT NULL REFERENCES sessions(id),
+		tool         TEXT NOT NULL,
+		stage        TEXT NOT NULL DEFAULT '',
+		effort       TEXT NOT NULL DEFAULT '',
+		error        TEXT NOT NULL,
+		context_snip TEXT NOT NULL DEFAULT '',
+		created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_advisor_errors_created ON advisor_errors(created_at)`,
 }
 
 // Close closes the database connection.

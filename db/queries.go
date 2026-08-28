@@ -152,6 +152,26 @@ func (d *DB) InsertDeliberationContribution(ctx context.Context, p InsertContrib
 	return err
 }
 
+// ─── Advisor Errors ─────────────────────────────────────────────────────
+
+type InsertErrorParams struct {
+	ID          string
+	SessionID   string
+	Tool        string
+	Stage       string
+	Effort      string
+	Error       string
+	ContextSnip string
+}
+
+func (d *DB) InsertError(ctx context.Context, p InsertErrorParams) error {
+	_, err := d.ExecContext(ctx, `
+		INSERT OR IGNORE INTO advisor_errors (id, session_id, tool, stage, effort, error, context_snip)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.SessionID, p.Tool, p.Stage, p.Effort, p.Error, p.ContextSnip)
+	return err
+}
+
 // ─── Dashboard Aggregation Queries ──────────────────────────────────────
 
 func (d *DB) GetOverviewMetrics(ctx context.Context) (*OverviewMetrics, error) {

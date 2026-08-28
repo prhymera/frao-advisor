@@ -134,6 +134,48 @@ func effortConfig(effort string) (*ThinkingConfig, string, int) {
 	}
 }
 
+// maxRetries bounds how many times a single DeepSeek call is re-attempted
+// after a transient upstream failure. Client timeouts are NOT retried — a
+// second long wait rarely helps and would double latency — but quick failures
+// (rate-limit 429, 5xx, dropped connections) usually succeed on retry.
+const maxRetries = 2
+
+// isTransientError reports whether a failed attempt is worth retrying. The
+// 300s client timeout means "upstream is genuinely slow", not a blip, so it
+// is deliberately excluded.
+func isTransientError(err error, status int) bool {
+	if status == 429 || (status >= 500 && status < 600) {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "connection reset"),
+		strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "broken pipe"),
+		strings.Contains(msg, "EOF"),
+		strings.Contains(msg, "no such host"),
+		strings.Contains(msg, "TLS handshake timeout"):
+		return true
+	}
+	return false
+}
+
+// retryBackoff returns the pause before retry attempt n (0-indexed). Short and
+// bounded so concurrent sessions don't pile onto a throttled API.
+func retryBackoff(attempt int) time.Duration {
+	switch attempt {
+	case 0:
+		return 2 * time.Second
+	case 1:
+		return 5 * time.Second
+	default:
+		return 12 * time.Second
+	}
+}
+
 // doChat is the raw chat-completion round-trip. thinking/reasoningEffort are
 // passed through to the API (nil/"" for the legacy no-thinking path).
 func (c *DeepSeekClient) doChat(messages []ChatMessage, temperature float64, maxTokens int, thinking *ThinkingConfig, reasoningEffort string) (*ChatResult, error) {
@@ -160,31 +202,36 @@ func (c *DeepSeekClient) doChat(messages []ChatMessage, temperature float64, max
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", c.baseURL+"/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	// Attempt loop with bounded retry on transient upstream failures. The
+	// serialization lock is off by default (concurrency), so retrying is what
+	// absorbs the occasional throttle/dropped-connection instead of a shared
+	// lock serializing all sessions.
+	var raw []byte
+	status := 0
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequest("POST", c.baseURL+"/chat/completions", bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	var resp *http.Response
-	err = withDeepSeekLock(func() error {
-		var callErr error
-		resp, callErr = c.http.Do(req)
-		return callErr
-	})
-	if err != nil {
-		return nil, fmt.Errorf("http call: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		raw, status, err = c.roundTrip(req)
+		if err == nil && status == 200 {
+			break
+		}
+		if attempt >= maxRetries || !isTransientError(err, status) {
+			break
+		}
+		log.Printf("transient upstream failure (status=%d, err=%v) — retrying %d/%d", status, err, attempt+1, maxRetries)
+		time.Sleep(retryBackoff(attempt))
 	}
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(raw[:min(len(raw), 500)]))
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("API error %d: %s", status, string(raw[:min(len(raw), 500)]))
 	}
 
 	var chatResp ChatResponse
@@ -214,4 +261,25 @@ func (c *DeepSeekClient) doChat(messages []ChatMessage, temperature float64, max
 	}
 
 	return result, nil
+}
+
+// roundTrip performs one HTTP request (optionally under the serialization
+// lock, when ADVISOR_SERIALIZE=1) and returns the raw body plus status code.
+func (c *DeepSeekClient) roundTrip(req *http.Request) ([]byte, int, error) {
+	var resp *http.Response
+	err := withDeepSeekLock(func() error {
+		var callErr error
+		resp, callErr = c.http.Do(req)
+		return callErr
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("http call: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
+	}
+	return raw, resp.StatusCode, nil
 }

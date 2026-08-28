@@ -22,7 +22,7 @@
 //   ADVISOR_DASHBOARD_DISABLE   — set to "1" to disable the embedded dashboard
 //   ADVISOR_TIMEOUT_SECONDS     — per-DeepSeek-call timeout (default: 300)
 //   ADVISOR_DEFAULT_EFFORT      — default reasoning_effort when unset (default: medium)
-//   ADVISOR_SERIALIZE           — "0" disables cross-process call serialization
+//   ADVISOR_SERIALIZE           — "1" enables cross-process serialization (default: off)
 
 package main
 
@@ -297,9 +297,9 @@ var tools = []Tool{
 				},
 				"reasoning_effort": {
 					Type:        "string",
-					Description: "How deeply to reason. high/xhigh yields better quality but takes longer",
+					Description: "How deeply to reason. Defaults to low for fast hands-on second opinions; high/xhigh yields better quality but takes longer",
 					Enum:        []string{"low", "medium", "high", "xhigh"},
-					Default:     defaultEffort(),
+					Default:     "low",
 				},
 			},
 			Required: []string{"question"},
@@ -404,7 +404,7 @@ Environment:
   ADVISOR_SESSION_LABEL         Human-readable session label (default: <workdir>-<pid>)
   ADVISOR_TIMEOUT_SECONDS      Per-DeepSeek-call timeout (default: 300)
   ADVISOR_DEFAULT_EFFORT       Default reasoning_effort when unset (default: medium)
-  ADVISOR_SERIALIZE            "0" disables cross-process call serialization`)
+  ADVISOR_SERIALIZE            "1" enables cross-process serialization (default "0" = concurrent; retries absorb throttling)`)
 }
 
 // ─── Tool Call ─────────────────────────────────────────────────────────
@@ -484,7 +484,9 @@ func handleConsult(args map[string]any, client *DeepSeekClient, progressToken an
 		return errorResult("'question' is required")
 	}
 
-	effort := getArg(args, "reasoning_effort", defaultEffort())
+	// frao-consult is the hands-on "quick second opinion" — default to low
+	// effort so interactive use returns fast. Explicit reasoning_effort overrides.
+	effort := getArg(args, "reasoning_effort", "low")
 	log.Printf("consult — effort=%s", effort)
 	sendProgress(progressToken, 0.1, 1, "Consulting deepseek-v4-pro...")
 
@@ -492,6 +494,7 @@ func handleConsult(args map[string]any, client *DeepSeekClient, progressToken an
 	result, err := client.ChatWithEffort(system, question, 0.1, effort)
 	if err != nil {
 		log.Printf("consult error: %v", err)
+		persister.CaptureError("consult", "call", effort, err.Error(), question)
 		return errorResult(fmt.Sprintf("Consult failed: %v", err))
 	}
 
@@ -529,6 +532,7 @@ func handleExpertReview(args map[string]any, client *DeepSeekClient, progressTok
 	result, err := client.ChatWithEffort(system, context, 0.15, effort)
 	if err != nil {
 		log.Printf("expert-review %s error: %v", expertKey, err)
+		persister.CaptureError("expert-review", expertKey, effort, err.Error(), context)
 		return errorResult(fmt.Sprintf("Review failed: %v", err))
 	}
 
@@ -585,6 +589,7 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 		result, err := client.ChatWithEffort(system, context, 0.15, effort)
 		if err != nil {
 			log.Printf("multi-perspective %s error: %v", key, err)
+			persister.CaptureError("multi-perspective", key, effort, err.Error(), context)
 			result = &ChatResult{Text: fmt.Sprintf("[Error consulting %s: %v]", expert.Name, err), Model: client.model}
 		}
 		log.Printf("multi-perspective — %s: got %d bytes", key, len(result.Text))
@@ -605,6 +610,7 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 	synthesisResult, err := client.ChatWithEffort(synthesisSystemPrompt, synthesisInput, 0.2, effort)
 	if err != nil {
 		log.Printf("synthesis error: %v", err)
+		persister.CaptureError("multi-perspective", "synthesis", effort, err.Error(), context)
 		synthesisResult = &ChatResult{Text: fmt.Sprintf("[Synthesis failed: %v]", err), Model: client.model}
 	}
 	synthesis := synthesisResult.Text
