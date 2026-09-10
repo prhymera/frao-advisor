@@ -1,7 +1,7 @@
 // Frao Advisor MCP — Go implementation.
 //
 // Provides expert review, multi-perspective analysis, and second opinions
-// using DeepSeek V4 Pro directly. No OpenRouter, no extra costs.
+// using DeepSeek V4.1 Flash directly. No OpenRouter, no extra costs.
 //
 // Architecture is ported from deliberation (github.com/antonbabenko/deliberation):
 //   - Expert personas with focused system prompts
@@ -14,13 +14,13 @@
 //
 // Environment variables:
 //   DEEPSEEK_API_KEY            — required: DeepSeek API key
-//   ADVISOR_MODEL               — model name (default: deepseek-v4-pro)
+//   ADVISOR_MODEL               — model name (default: deepseek-flash)
 //   ADVISOR_API_BASE            — API base URL (default: https://api.deepseek.com/v1)
 //   ADVISOR_DASHBOARD_PORT      — dashboard port (default: 9753)
 //   ADVISOR_DASHBOARD_URL       — dashboard endpoint for MCP publish (default: http://10.64.0.5:9753)
 //   ADVISOR_SESSION_LABEL       — per-process session label (default: <workdir>-<pid>)
 //   ADVISOR_DASHBOARD_DISABLE   — set to "1" to disable the embedded dashboard
-//   ADVISOR_TIMEOUT_SECONDS     — per-DeepSeek-call timeout (default: 300)
+//   ADVISOR_TIMEOUT_SECONDS     — per-DeepSeek-call timeout (default: 330)
 //   ADVISOR_DEFAULT_EFFORT      — default reasoning_effort when unset (default: medium)
 //   ADVISOR_SERIALIZE           — "1" enables cross-process serialization (default: off)
 
@@ -35,7 +35,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
+	"github.com/prhymera/frao-advisor/cost"
 	"github.com/prhymera/frao-advisor/dashboard"
 	"github.com/prhymera/frao-advisor/db"
 	"github.com/prhymera/frao-advisor/publish"
@@ -86,7 +89,7 @@ func main() {
 		log.Fatal("DEEPSEEK_API_KEY or ANTHROPIC_AUTH_TOKEN must be set")
 	}
 
-	model := getEnv("ADVISOR_MODEL", "deepseek-v4-pro")
+	model := getEnv("ADVISOR_MODEL", "deepseek-flash")
 	baseURL := getEnv("ADVISOR_API_BASE", "https://api.deepseek.com/v1")
 
 	client := NewDeepSeekClient(apiKey, baseURL, model)
@@ -247,12 +250,19 @@ func writeError(id any, code int, message string, data any) {
 	writeJSON(resp)
 }
 
+// stdoutMu serializes writes to stdout. JSON-RPC over stdio requires exactly
+// one complete JSON object per line; now that expert calls run concurrently,
+// their progress notifications would otherwise interleave and corrupt frames.
+var stdoutMu sync.Mutex
+
 func writeJSON(v any) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("marshal error: %v", err)
 		return
 	}
+	stdoutMu.Lock()
+	defer stdoutMu.Unlock()
 	fmt.Println(string(data))
 }
 
@@ -286,7 +296,7 @@ var tools = []Tool{
 	},
 	{
 		Name: "frao-consult",
-		Description: "Send any question or code to deepseek-v4-pro for a second opinion. " +
+		Description: "Send any question or code to deepseek-flash for a second opinion. " +
 			"Use when you need an independent review of a design decision, bug analysis, or technical question.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -373,7 +383,7 @@ func handleToolsList(req Request) {
 }
 
 func printUsage() {
-	fmt.Println(`Frao Advisor MCP — expert reviews and second opinions using DeepSeek V4 Pro.
+	fmt.Println(`Frao Advisor MCP — expert reviews and second opinions using DeepSeek V4.1 Flash.
 
 Usage:
   frao-advisor                  Run as MCP server (stdin/stdout JSON-RPC)
@@ -393,7 +403,7 @@ Setup:
 
 Environment:
   DEEPSEEK_API_KEY              DeepSeek API key (required for MCP mode)
-  ADVISOR_MODEL                 Model name (default: deepseek-v4-pro)
+  ADVISOR_MODEL                 Model name (default: deepseek-flash)
   ADVISOR_API_BASE              API base URL (default: https://api.deepseek.com/v1)
   ADVISOR_DB_PATH               SQLite database path (default: ./advisor.db)
   ADVISOR_DASHBOARD_PORT        Dashboard HTTP port (default: 9753)
@@ -402,7 +412,7 @@ Environment:
   ADVISOR_DASHBOARD_EMBED       Set to "1" to embed the dashboard in MCP mode (dev only)
   ADVISOR_DASHBOARD_DISABLE     Set to "1" to disable the dashboard (compat)
   ADVISOR_SESSION_LABEL         Human-readable session label (default: <workdir>-<pid>)
-  ADVISOR_TIMEOUT_SECONDS      Per-DeepSeek-call timeout (default: 300)
+  ADVISOR_TIMEOUT_SECONDS      Per-DeepSeek-call timeout (default: 330)
   ADVISOR_DEFAULT_EFFORT       Default reasoning_effort when unset (default: medium)
   ADVISOR_SERIALIZE            "1" enables cross-process serialization (default "0" = concurrent; retries absorb throttling)`)
 }
@@ -488,7 +498,7 @@ func handleConsult(args map[string]any, client *DeepSeekClient, progressToken an
 	// effort so interactive use returns fast. Explicit reasoning_effort overrides.
 	effort := getArg(args, "reasoning_effort", "low")
 	log.Printf("consult — effort=%s", effort)
-	sendProgress(progressToken, 0.1, 1, "Consulting deepseek-v4-pro...")
+	sendProgress(progressToken, 0.1, 1, "Consulting deepseek-flash...")
 
 	system := fmt.Sprintf(advisorSystemPreamble, effort)
 	result, err := client.ChatWithEffort(system, question, 0.1, effort)
@@ -501,8 +511,8 @@ func handleConsult(args map[string]any, client *DeepSeekClient, progressToken an
 	persister.CaptureConsult(currentSessionID, question, result)
 
 	sendProgress(progressToken, 1, 1, "Consult complete")
-	log.Printf("consult — %d tokens, $%.6f, %dms", result.TotalTokens,
-		float64(result.PromptTokens+result.CompletionTokens)/1_000_000*0.435, result.DurationMs)
+	_, _, consultCost := cost.CalculateCost(result.Model, result.PromptTokens, result.CompletionTokens, false)
+	log.Printf("consult — %d tokens, $%.6f, %dms", result.TotalTokens, consultCost, result.DurationMs)
 	return textResult(result.Text)
 }
 
@@ -571,47 +581,71 @@ func handleMultiPerspective(args map[string]any, client *DeepSeekClient, progres
 	total := float64(len(selectedExperts) + 1) // experts + synthesis
 	log.Printf("multi-perspective — %d experts: %s, effort=%s", len(selectedExperts), strings.Join(selectedExperts, ", "), effort)
 
-	// Step 1: Run each expert (sequentially to respect API rate limits)
+	// Step 1: Run each expert concurrently. They are independent reviews of the
+	// same context, so serializing them buys nothing: three experts each
+	// running to the client timeout cost ~15 minutes of wall clock, and one
+	// stalled expert blocked the other two. Results are written by index so the
+	// reported order stays deterministic and matches the requested order.
 	type contribution struct {
 		Key    string
 		Result *ChatResult
 	}
-
-	var contributions []contribution
+	sendProgress(progressToken, 0, total, fmt.Sprintf("Consulting %d experts in parallel...", len(selectedExperts)))
+	contributions := make([]contribution, len(selectedExperts))
+	fatalFlags := make([]bool, len(selectedExperts))
+	var doneCount int64
+	var wg sync.WaitGroup
 	for i, key := range selectedExperts {
-		expert := experts[key]
-		log.Printf("multi-perspective — consulting %s (%d/%d)...", expert.Name, i+1, len(selectedExperts))
-		sendProgress(progressToken, float64(i)/total, total, fmt.Sprintf("Consulting %s...", expert.Name))
-
-		system := fmt.Sprintf("%s\n\nReasoning effort: %s\nYou are one of %d experts reviewing this. Focus solely on your domain. Do not defer to or repeat other perspectives.",
-			expert.SystemPrompt, effort, len(selectedExperts))
-
-		result, err := client.ChatWithEffort(system, context, 0.15, effort)
-		if err != nil {
-			log.Printf("multi-perspective %s error: %v", key, err)
-			persister.CaptureError("multi-perspective", key, effort, err.Error(), context)
-			result = &ChatResult{Text: fmt.Sprintf("[Error consulting %s: %v]", expert.Name, err), Model: client.model}
+		wg.Add(1)
+		go func(i int, key string) {
+			defer wg.Done()
+			expert := experts[key]
+			log.Printf("multi-perspective — consulting %s (%d/%d)...", expert.Name, i+1, len(selectedExperts))
+			system := fmt.Sprintf("%s\n\nReasoning effort: %s\nYou are one of %d experts reviewing this. Focus solely on your domain. Do not defer to or repeat other perspectives.",
+				expert.SystemPrompt, effort, len(selectedExperts))
+			result, err := client.ChatWithEffort(system, context, 0.15, effort)
+			if err != nil {
+				log.Printf("multi-perspective %s error: %v", key, err)
+				persister.CaptureError("multi-perspective", key, effort, err.Error(), context)
+				fatalFlags[i] = isAccountError(err)
+				result = &ChatResult{Text: fmt.Sprintf("[Error consulting %s: %v]", expert.Name, err), Model: client.model}
+			}
+			log.Printf("multi-perspective — %s: got %d bytes", key, len(result.Text))
+			contributions[i] = contribution{Key: key, Result: result}
+			n := atomic.AddInt64(&doneCount, 1)
+			sendProgress(progressToken, float64(n)/total, total, fmt.Sprintf("%s complete (%d/%d)", expert.Name, n, len(selectedExperts)))
+		}(i, key)
+	}
+	wg.Wait()
+	// An account-level failure (billing or auth) rejects every call identically
+	// until the account is fixed, so synthesis would be another doomed call.
+	accountFatal := false
+	for _, f := range fatalFlags {
+		if f {
+			accountFatal = true
 		}
-		log.Printf("multi-perspective — %s: got %d bytes", key, len(result.Text))
-		contributions = append(contributions, contribution{Key: key, Result: result})
 	}
-
-	// Step 2: Build synthesis input
-	log.Print("multi-perspective — synthesizing...")
-	sendProgress(progressToken, float64(len(selectedExperts))/total, total, "Synthesizing expert perspectives...")
-
-	var parts []string
-	for _, c := range contributions {
-		parts = append(parts, fmt.Sprintf("=== %s (%s) ===\n%s", experts[c.Key].Name, c.Key, c.Result.Text))
-	}
-
-	synthesisInput := fmt.Sprintf("Synthesize the following expert perspectives into a unified recommendation.\n\nIdentify:\n  1. Areas of agreement\n  2. Areas of disagreement\n  3. Critical findings\n  4. Final recommendation\n\n%s", strings.Join(parts, "\n\n"))
-
-	synthesisResult, err := client.ChatWithEffort(synthesisSystemPrompt, synthesisInput, 0.2, effort)
-	if err != nil {
-		log.Printf("synthesis error: %v", err)
-		persister.CaptureError("multi-perspective", "synthesis", effort, err.Error(), context)
-		synthesisResult = &ChatResult{Text: fmt.Sprintf("[Synthesis failed: %v]", err), Model: client.model}
+	// Step 2: Build synthesis input and synthesize.
+	synthesisResult := &ChatResult{Model: client.model}
+	if accountFatal {
+		log.Print("multi-perspective — skipping synthesis: account-level API error (billing/auth)")
+		synthesisResult.Text = "[Synthesis skipped: the DeepSeek API rejected the expert calls at account level — check API balance and key.]"
+	} else {
+		log.Print("multi-perspective — synthesizing...")
+		sendProgress(progressToken, float64(len(selectedExperts))/total, total, "Synthesizing expert perspectives...")
+		var parts []string
+		for _, c := range contributions {
+			parts = append(parts, fmt.Sprintf("=== %s (%s) ===\n%s", experts[c.Key].Name, c.Key, c.Result.Text))
+		}
+		synthesisInput := fmt.Sprintf("Synthesize the following expert perspectives into a unified recommendation.\n\nIdentify:\n  1. Areas of agreement\n  2. Areas of disagreement\n  3. Critical findings\n  4. Final recommendation\n\n%s", strings.Join(parts, "\n\n"))
+		res, err := client.ChatWithEffort(synthesisSystemPrompt, synthesisInput, 0.2, effort)
+		if err != nil {
+			log.Printf("synthesis error: %v", err)
+			persister.CaptureError("multi-perspective", "synthesis", effort, err.Error(), context)
+			synthesisResult = &ChatResult{Text: fmt.Sprintf("[Synthesis failed: %v]", err), Model: client.model}
+		} else {
+			synthesisResult = res
+		}
 	}
 	synthesis := synthesisResult.Text
 
@@ -669,10 +703,22 @@ func getArg(args map[string]any, key, fallback string) string {
 	}
 	return fallback
 }
+
+// isAccountError reports whether a failure is account-level (billing or auth)
+// rather than request-level. These reject every subsequent call identically
+// until the account is fixed, so continuing a fan-out is pointless.
+func isAccountError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "API error 402") || strings.Contains(msg, "API error 401")
+}
+
 func defaultEffort() string {
-	// Default reasoning effort for calls that don't specify one. "medium" is
-	// a genuine middle tier (see effortConfig) that stays well under the
-	// client timeout while keeping enough reasoning budget for real analysis.
+	// Default reasoning effort for calls that don't specify one. Note the API
+	// exposes only low|high|max — "medium" is a compatibility alias for high —
+	// so this selects the API's default reasoning depth, not a middle tier.
 	// ADVISOR_DEFAULT_EFFORT overrides it.
 	if v := os.Getenv("ADVISOR_DEFAULT_EFFORT"); v != "" {
 		return v

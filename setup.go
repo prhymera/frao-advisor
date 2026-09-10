@@ -11,7 +11,7 @@ import (
 // The protocol is opt-out: active by default unless ~/.claude/advisor-inactive exists.
 const advisorOnCommand = `---
 name: advisor-on
-description: Enable advisor mode — automatic expert reviews on every task using deepseek-v4-pro
+description: Enable advisor mode — automatic expert reviews on every task using deepseek-flash
 ---
 
 # /advisor-on — Enable Advisor Mode
@@ -93,7 +93,7 @@ func runSetup(projectDir, binPath string, global bool) {
 	fmt.Printf("      \"args\": [],\n")
 	fmt.Printf("      \"env\": {\n")
 	fmt.Printf("        \"DEEPSEEK_API_KEY\": \"$YOUR_DEEPSEEK_KEY\",\n")
-	fmt.Printf("        \"ADVISOR_MODEL\": \"deepseek-v4-pro\"\n")
+	fmt.Printf("        \"ADVISOR_MODEL\": \"deepseek-flash\"\n")
 	fmt.Printf("      }\n")
 	fmt.Printf("    }\n")
 	fmt.Printf("  }")
@@ -111,7 +111,7 @@ func runSetup(projectDir, binPath string, global bool) {
 	fmt.Println("  ## \U0001f9e0 ADVISOR PROTOCOL (Opt-Out)")
 	fmt.Println()
 	fmt.Println("  The frao-advisor MCP server provides expert second opinions, code review,")
-	fmt.Println("  security analysis, and multi-perspective synthesis using deepseek-v4-pro.")
+	fmt.Println("  security analysis, and multi-perspective synthesis using deepseek-flash.")
 	fmt.Println()
 	fmt.Println("  The protocol is **active by default** after installation. Use `/advisor-off` to disable.")
 	fmt.Println()

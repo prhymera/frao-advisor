@@ -1,6 +1,6 @@
 # Frao Advisor MCP
 
-Expert review, multi-perspective analysis, and second opinions for Claude Code — powered by **DeepSeek V4 Pro** directly. No OpenRouter, no extra costs.
+Expert review, multi-perspective analysis, and second opinions for Claude Code — powered by **DeepSeek V4.1 Flash** directly. No OpenRouter, no extra costs.
 
 Built in **Go** from deliberation's proven architecture, porting the expert persona system, consensus patterns, and MCP interface to a zero-dependency binary that calls DeepSeek's native API.
 
@@ -45,7 +45,7 @@ What we **don't** need from deliberation:
 | Tool | Description |
 |------|-------------|
 | `frao-expert-list` | List all 7 expert personas |
-| `frao-consult` | Second opinion from deepseek-v4-pro on any question |
+| `frao-consult` | Second opinion from deepseek-flash on any question |
 | `frao-expert-review` | Review code/architecture through a specific expert lens |
 | `frao-multi-perspective` | Analyze from N expert angles, then synthesize |
 
@@ -65,7 +65,7 @@ What we **don't** need from deliberation:
 
 ### Prerequisites
 
-- A **DeepSeek API key** with access to `deepseek-v4-pro`
+- A **DeepSeek API key** with access to `deepseek-flash`
 - Go 1.26+ (to build), or use the prebuilt binary
 
 ### Build
@@ -139,8 +139,7 @@ Add to your MCP server config (`~/.claude.json` or `.mcp.json`):
       "args": [],
       "env": {
         "DEEPSEEK_API_KEY": "sk-...",
-        "ADVISOR_MODEL": "deepseek-v4-pro"
-      }
+        "ADVISOR_MODEL": "deepseek-flash"
     }
   }
 }
@@ -158,7 +157,7 @@ claude mcp add frao-advisor -- /path/to/frao-advisor
 |----------|---------|-------------|
 | `DEEPSEEK_API_KEY` | — | DeepSeek API key (required for MCP mode) |
 | `ANTHROPIC_AUTH_TOKEN` | — | Fallback if `DEEPSEEK_API_KEY` is unset |
-| `ADVISOR_MODEL` | `deepseek-v4-pro` | Model to use for all advisor calls |
+| `ADVISOR_MODEL` | `deepseek-flash` | Model to use for all advisor calls |
 | `ADVISOR_API_BASE` | `https://api.deepseek.com/v1` | API base URL |
 | `ADVISOR_DB_PATH` | `./advisor.db` | SQLite path; for the dashboard, point at the existing DB to preserve history |
 | `ADVISOR_DASHBOARD_URL` | `http://10.64.0.5:9753` | Dashboard endpoint MCP publishes to; `""` disables |
@@ -166,6 +165,9 @@ claude mcp add frao-advisor -- /path/to/frao-advisor
 | `ADVISOR_DASHBOARD_PORT` | `9753` | Dashboard HTTP port |
 | `ADVISOR_DASHBOARD_EMBED` | unset | `1` re-embeds the dashboard in MCP mode (dev only) |
 | `ADVISOR_SESSION_LABEL` | `<workdir>-<pid>` | Human-readable label attributing usage to a session |
+| `ADVISOR_TIMEOUT_SECONDS` | `330` | Per-DeepSeek-call timeout; sits above the ~300s point where the gateway cuts long responses so a cut surfaces as a retryable truncated body |
+| `ADVISOR_DEFAULT_EFFORT` | `medium` | Default `reasoning_effort` when a call does not set one |
+| `ADVISOR_SERIALIZE` | `0` | `1` serializes DeepSeek calls across processes (off by default; retries absorb throttling) |
 
 ## Examples
 

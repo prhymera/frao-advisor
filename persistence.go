@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/prhymera/frao-advisor/cost"
 	"github.com/prhymera/frao-advisor/db"
@@ -20,6 +21,13 @@ type Persistence struct {
 	database     *db.DB
 	publisher    *publish.Publisher
 	sessionLabel string
+}
+
+// usedPrices returns the effective per-model rates for the moment of the call,
+// so the price columns recorded next to a cost match the cost itself
+// (alias-resolved and peak-adjusted).
+func usedPrices(model string) cost.ModelPrices {
+	return cost.PricesFor(model, time.Now())
 }
 
 // CaptureConsult persists a frao-consult result.
@@ -41,8 +49,8 @@ func (p *Persistence) CaptureConsult(sessionID string, question string, result *
 		CompletionTokens: result.CompletionTokens,
 		InputCost:        inputCost,
 		OutputCost:       outputCost,
-		InputPriceUsed:   cost.DefaultPrices[result.Model].InputPricePerM,
-		OutputPriceUsed:  cost.DefaultPrices[result.Model].OutputPricePerM,
+		InputPriceUsed:   usedPrices(result.Model).InputPricePerM,
+		OutputPriceUsed:  usedPrices(result.Model).OutputPricePerM,
 		CacheHit:         false,
 		DurationMs:       result.DurationMs,
 	})
@@ -63,8 +71,8 @@ func (p *Persistence) CaptureConsult(sessionID string, question string, result *
 		CompletionTokens: result.CompletionTokens,
 		InputCost:        inputCost,
 		OutputCost:       outputCost,
-		InputPriceUsed:   cost.DefaultPrices[result.Model].InputPricePerM,
-		OutputPriceUsed:  cost.DefaultPrices[result.Model].OutputPricePerM,
+		InputPriceUsed:   usedPrices(result.Model).InputPricePerM,
+		OutputPriceUsed:  usedPrices(result.Model).OutputPricePerM,
 		CacheHit:         false,
 		DurationMs:       result.DurationMs,
 	})
@@ -90,8 +98,8 @@ func (p *Persistence) CaptureExpertReview(sessionID, expertKey, context string, 
 		CompletionTokens: result.CompletionTokens,
 		InputCost:        inputCost,
 		OutputCost:       outputCost,
-		InputPriceUsed:   cost.DefaultPrices[result.Model].InputPricePerM,
-		OutputPriceUsed:  cost.DefaultPrices[result.Model].OutputPricePerM,
+		InputPriceUsed:   usedPrices(result.Model).InputPricePerM,
+		OutputPriceUsed:  usedPrices(result.Model).OutputPricePerM,
 		CacheHit:         false,
 		DurationMs:       result.DurationMs,
 	})
@@ -113,8 +121,8 @@ func (p *Persistence) CaptureExpertReview(sessionID, expertKey, context string, 
 		CompletionTokens: result.CompletionTokens,
 		InputCost:        inputCost,
 		OutputCost:       outputCost,
-		InputPriceUsed:   cost.DefaultPrices[result.Model].InputPricePerM,
-		OutputPriceUsed:  cost.DefaultPrices[result.Model].OutputPricePerM,
+		InputPriceUsed:   usedPrices(result.Model).InputPricePerM,
+		OutputPriceUsed:  usedPrices(result.Model).OutputPricePerM,
 		CacheHit:         false,
 		DurationMs:       result.DurationMs,
 	})

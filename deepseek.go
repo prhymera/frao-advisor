@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,13 +28,14 @@ func NewDeepSeekClient(apiKey, baseURL, model string) *DeepSeekClient {
 		baseURL = "https://api.deepseek.com/v1"
 	}
 	if model == "" {
-		model = "deepseek-v4-pro"
+		model = "deepseek-flash"
 	}
-	// ADVISOR_TIMEOUT_SECONDS bounds each DeepSeek round-trip. High-effort
-	// thinking responses regularly exceed 3 minutes, so the default is 300s
-	// (up from 180s) — long enough for deep reviews, short enough to fail
-	// loudly instead of hanging forever.
-	timeoutSec := 300
+	// ADVISOR_TIMEOUT_SECONDS bounds each DeepSeek round-trip. Successful
+	// reviews have been observed at 299s, so the default sits deliberately
+	// ABOVE the ~300s point at which DeepSeek's gateway cuts long responses:
+	// a cut then surfaces as a truncated 200 body (retryable) rather than as
+	// our own client timeout, which is not retried.
+	timeoutSec := 330
 	if v := getEnv("ADVISOR_TIMEOUT_SECONDS", ""); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			timeoutSec = n
@@ -115,22 +117,31 @@ func (c *DeepSeekClient) ChatWithEffort(system, user string, temperature float64
 	return result, nil
 }
 
-// effortConfig maps the tool's reasoning_effort arg to DeepSeek V4's thinking
-// controls and an output budget generous enough that reasoning can't starve
-// the final answer.
+// maxOutputTokens caps the output budget for every tier.
+//
+// Measured throughput on this workload is ~55 output tokens/second, so a
+// 32K-token budget needs ~600s to generate — far past the point where
+// DeepSeek's gateway cuts the request (no advisor call has ever succeeded
+// beyond 298s). A budget above ~16K therefore cannot be honoured: the call is
+// cut mid-answer, and reasoning tokens count against the same budget. 16384 is
+// the largest budget that can realistically complete.
+const maxOutputTokens = 16384
+
+// effortConfig maps the tool's reasoning_effort arg to DeepSeek's thinking
+// controls and an output budget.
+//
+// The API accepts only low|high|max. medium, xhigh, minimal and ultra are
+// compatibility aliases that collapse onto those three (medium->high,
+// xhigh->high, minimal->low, ultra->max), so there is no genuine middle tier
+// to select — the tiers below differ only where the API actually allows it.
 func effortConfig(effort string) (*ThinkingConfig, string, int) {
 	switch strings.ToLower(effort) {
-	case "low":
-		return &ThinkingConfig{Type: "enabled"}, "low", 16384
-	case "medium":
-		// Genuine middle tier: medium reasoning effort with a 16K budget —
-		// fast enough to stay well under the client timeout, deep enough for
-		// real analysis. This is the default effort.
-		return &ThinkingConfig{Type: "enabled"}, "medium", 16384
-	case "xhigh":
-		return &ThinkingConfig{Type: "enabled"}, "max", 65536
-	default: // "high" or unset
-		return &ThinkingConfig{Type: "enabled"}, "high", 32768
+	case "low", "minimal":
+		return &ThinkingConfig{Type: "enabled"}, "low", maxOutputTokens
+	case "xhigh", "ultra", "max":
+		return &ThinkingConfig{Type: "enabled"}, "max", maxOutputTokens
+	default: // "medium", "high" or unset — the API's default reasoning depth
+		return &ThinkingConfig{Type: "enabled"}, "high", maxOutputTokens
 	}
 }
 
@@ -140,11 +151,23 @@ func effortConfig(effort string) (*ThinkingConfig, string, int) {
 // (rate-limit 429, 5xx, dropped connections) usually succeed on retry.
 const maxRetries = 2
 
-// isTransientError reports whether a failed attempt is worth retrying. The
-// 300s client timeout means "upstream is genuinely slow", not a blip, so it
-// is deliberately excluded.
+// errTruncatedBody marks a 200 response whose body was empty or not valid
+// JSON. DeepSeek's gateway cuts long-running requests near the client timeout
+// and returns a short or empty body instead of an error status; this sentinel
+// wraps that case so it can be classified as retryable.
+var errTruncatedBody = errors.New("empty or truncated response body")
+
+// isTransientError reports whether a failed attempt is worth retrying.
+//
+// The client timeout is deliberately NOT retried: a second multi-minute wait
+// rarely helps and would double latency. A truncated 200 body IS retried — the
+// request reached the model and the gateway cut the answer, so a fresh attempt
+// is the only recovery path.
 func isTransientError(err error, status int) bool {
 	if status == 429 || (status >= 500 && status < 600) {
+		return true
+	}
+	if errors.Is(err, errTruncatedBody) {
 		return true
 	}
 	if err == nil {
@@ -206,8 +229,14 @@ func (c *DeepSeekClient) doChat(messages []ChatMessage, temperature float64, max
 	// serialization lock is off by default (concurrency), so retrying is what
 	// absorbs the occasional throttle/dropped-connection instead of a shared
 	// lock serializing all sessions.
+	//
+	// A 200 whose body is empty or not valid JSON is also treated as transient:
+	// that is the signature of the upstream gateway cutting a long-running
+	// request, and it is the advisor's single most common failure. Without a
+	// retry the whole call is lost after already waiting out the timeout.
 	var raw []byte
 	status := 0
+	var callErr error
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequest("POST", c.baseURL+"/chat/completions", bytes.NewReader(payload))
 		if err != nil {
@@ -215,20 +244,21 @@ func (c *DeepSeekClient) doChat(messages []ChatMessage, temperature float64, max
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-		raw, status, err = c.roundTrip(req)
-		if err == nil && status == 200 {
+		raw, status, callErr = c.roundTrip(req)
+		if callErr == nil && status == 200 && json.Valid(bytes.TrimSpace(raw)) {
 			break
 		}
-		if attempt >= maxRetries || !isTransientError(err, status) {
+		if callErr == nil && status == 200 {
+			callErr = fmt.Errorf("%w (%d bytes)", errTruncatedBody, len(raw))
+		}
+		if attempt >= maxRetries || !isTransientError(callErr, status) {
 			break
 		}
-		log.Printf("transient upstream failure (status=%d, err=%v) — retrying %d/%d", status, err, attempt+1, maxRetries)
+		log.Printf("transient upstream failure (status=%d, err=%v) — retrying %d/%d", status, callErr, attempt+1, maxRetries)
 		time.Sleep(retryBackoff(attempt))
 	}
-
-	if err != nil {
-		return nil, err
+	if callErr != nil {
+		return nil, callErr
 	}
 	if status != 200 {
 		return nil, fmt.Errorf("API error %d: %s", status, string(raw[:min(len(raw), 500)]))
