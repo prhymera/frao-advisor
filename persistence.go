@@ -31,7 +31,7 @@ func usedPrices(model string) cost.ModelPrices {
 }
 
 // CaptureConsult persists a frao-consult result.
-func (p *Persistence) CaptureConsult(sessionID string, question string, result *ChatResult) {
+func (p *Persistence) CaptureConsult(sessionID string, question string, result *ChatResult, effort string) {
 	if p == nil || p.database == nil {
 		return
 	}
@@ -44,7 +44,7 @@ func (p *Persistence) CaptureConsult(sessionID string, question string, result *
 		Question:         question,
 		Response:         result.Text,
 		Model:            result.Model,
-		ReasoningEffort:  "high", // TODO: pass actual effort from args
+		ReasoningEffort:  effort,
 		PromptTokens:     result.PromptTokens,
 		CompletionTokens: result.CompletionTokens,
 		InputCost:        inputCost,
@@ -66,7 +66,7 @@ func (p *Persistence) CaptureConsult(sessionID string, question string, result *
 		Question:         question,
 		Response:         result.Text,
 		Model:            result.Model,
-		ReasoningEffort:  "high",
+		ReasoningEffort:  effort,
 		PromptTokens:     result.PromptTokens,
 		CompletionTokens: result.CompletionTokens,
 		InputCost:        inputCost,
@@ -79,7 +79,7 @@ func (p *Persistence) CaptureConsult(sessionID string, question string, result *
 }
 
 // CaptureExpertReview persists a frao-expert-review result.
-func (p *Persistence) CaptureExpertReview(sessionID, expertKey, context string, result *ChatResult) {
+func (p *Persistence) CaptureExpertReview(sessionID, expertKey, context string, result *ChatResult, effort string) {
 	if p == nil || p.database == nil {
 		return
 	}
@@ -93,7 +93,7 @@ func (p *Persistence) CaptureExpertReview(sessionID, expertKey, context string, 
 		Context:          context,
 		Analysis:         result.Text,
 		Model:            result.Model,
-		ReasoningEffort:  "high",
+		ReasoningEffort:  effort,
 		PromptTokens:     result.PromptTokens,
 		CompletionTokens: result.CompletionTokens,
 		InputCost:        inputCost,
@@ -116,7 +116,7 @@ func (p *Persistence) CaptureExpertReview(sessionID, expertKey, context string, 
 		Context:          context,
 		Analysis:         result.Text,
 		Model:            result.Model,
-		ReasoningEffort:  "high",
+		ReasoningEffort:  effort,
 		PromptTokens:     result.PromptTokens,
 		CompletionTokens: result.CompletionTokens,
 		InputCost:        inputCost,

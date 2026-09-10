@@ -508,7 +508,7 @@ func handleConsult(args map[string]any, client *DeepSeekClient, progressToken an
 		return errorResult(fmt.Sprintf("Consult failed: %v", err))
 	}
 
-	persister.CaptureConsult(currentSessionID, question, result)
+	persister.CaptureConsult(currentSessionID, question, result, effort)
 
 	sendProgress(progressToken, 1, 1, "Consult complete")
 	_, _, consultCost := cost.CalculateCost(result.Model, result.PromptTokens, result.CompletionTokens, false)
@@ -546,7 +546,7 @@ func handleExpertReview(args map[string]any, client *DeepSeekClient, progressTok
 		return errorResult(fmt.Sprintf("Review failed: %v", err))
 	}
 
-	persister.CaptureExpertReview(currentSessionID, expertKey, context, result)
+	persister.CaptureExpertReview(currentSessionID, expertKey, context, result, effort)
 
 	sendProgress(progressToken, 1, 1, fmt.Sprintf("%s review complete", expert.Name))
 	log.Printf("expert-review %s — %d tokens, %dms", expertKey, result.TotalTokens, result.DurationMs)
